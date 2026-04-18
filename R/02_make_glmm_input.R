@@ -325,6 +325,7 @@ if (is.null(year_value) || is.null(month_value) || is.null(area_value) || is.nul
   stop("Failed to derive one of the required fields: date, year, month, area, vessel.")
 }
 
+effort_raw_value <- duration_min_value
 effort_value <- duration_min_value
 
 # effort は曳網時間が取れる場合は duration_min を使い、無い場合のみ 1 を使う
@@ -392,7 +393,11 @@ glmm_input <- raw_input |>
     flag_duration_out_of_range = !is.na(duration_min_raw) & (duration_min_raw < duration_min_min_glmm | duration_min_raw > duration_min_max_glmm),
     flag_duration_bad = flag_duration_missing | flag_duration_out_of_range,
     duration_min_glmm = if_else(flag_duration_bad, NA_real_, as.numeric(duration_min_raw)),
-    effort_raw = effort,
+    # effort_raw は未補正の raw 値
+    effort_raw = if (is.null(effort_raw_value)) NA_real_ else as.numeric(effort_raw_value),
+    # effort は既存 GLMM 互換のための補正済み値
+    effort = as.numeric(effort),
+    # effort_glmm は cleaned duration に基づく GLMM 用値
     effort_glmm = duration_min_glmm
   ) |>
   select(
@@ -429,8 +434,6 @@ if (any(is.na(glmm_input$count_total))) {
 if (any(is.na(glmm_input$effort)) || any(!is.finite(glmm_input$effort)) || any(glmm_input$effort <= 0)) {
   stop("effort must be finite and > 0.")
 }
-
-write_csv(glmm_input, output_path)
 
 # -----------------------------------------
 # check: 必須列・件数・分布の確認
@@ -548,6 +551,14 @@ glmm_input_check <- glmm_input_check |>
     ),
     flag_year_out_of_range = !(year %in% 2020:2024)
   )
+
+glmm_input <- glmm_input_check |>
+  select(
+    all_of(names(glmm_input)),
+    flag_area_missing, flag_non_integer_count, flag_year_out_of_range
+  )
+
+write_csv(glmm_input, output_path)
 
 area_missing_rows <- glmm_input_check |>
   filter(flag_area_missing) |>
