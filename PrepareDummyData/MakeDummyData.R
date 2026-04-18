@@ -111,7 +111,7 @@ if (nrow(n_month_raw) != length(ym_order)) {
 
 ym_counts <- tibble(
   ym = ym_order,
-  n_tow = n_month_raw$n_tow
+  n_tow = as.integer(round(n_month_raw$n_tow))
 ) |>
   mutate(
     year = as.integer(substr(ym, 1, 4)),
@@ -126,6 +126,94 @@ write_csv(
     mutate(ym = as.character(ym)),
   "data_processed/ym_counts_extracted.csv"
 )
+
+# -----------------------------------------
+# 4. 1行=1曳網の擬似フルデータ作成
+# -----------------------------------------
+set.seed(123)
+
+vessel_candidates <- c("稲荷丸", "大成丸", "第八正利丸", "清竜丸", "海幸丸")
+area_candidates <- c("151", "152", "161", "162", "172", "201", "202", "203", "212", "213", "214", "223", "224")
+
+year_effect_tbl <- tibble(
+  year = c(2020L, 2021L, 2022L, 2023L, 2024L),
+  chu_mult = c(0.85, 0.95, 1.00, 1.15, 1.00),
+  dai_mult = c(0.85, 0.95, 1.00, 1.20, 1.05),
+  toku_mult = c(0.80, 0.95, 1.00, 1.20, 1.05),
+  tokudai_mult = c(0.75, 0.90, 1.00, 1.10, 1.30),
+  ware_mult = c(0.95, 1.00, 1.00, 1.05, 1.00),
+  sho_mult = c(1.00, 1.00, 1.00, 1.05, 0.95),
+  shosho_mult = c(1.00, 1.00, 1.00, 1.05, 0.95)
+)
+
+akagai_dummy_tows <- ym_counts |>
+  mutate(ym = as.character(ym)) |>
+  rowwise() |>
+  do({
+    n_tow_i <- .$n_tow
+    year_i <- .$year
+    month_i <- .$month
+    ym_i <- .$ym
+    day_i <- sample(1:28, size = n_tow_i, replace = TRUE)
+    start_minute_i <- sample(seq(6 * 60, 14 * 60, by = 5), size = n_tow_i, replace = TRUE)
+    duration_i <- sample(40:120, size = n_tow_i, replace = TRUE)
+    end_minute_i <- start_minute_i + duration_i
+    depth_mid_i <- runif(n_tow_i, min = 16, max = 43)
+    depth_min_i <- floor(depth_mid_i - runif(n_tow_i, min = 0, max = 3))
+    depth_max_i <- ceiling(depth_mid_i + runif(n_tow_i, min = 0, max = 3))
+
+    tibble(
+      year = year_i,
+      month = month_i,
+      ym = ym_i,
+      vessel = sample(vessel_candidates, size = n_tow_i, replace = TRUE),
+      date = sprintf("%04d-%02d-%02d", year_i, month_i, day_i),
+      tow_no = seq_len(n_tow_i),
+      start_time = sprintf("%02d:%02d", start_minute_i %/% 60, start_minute_i %% 60),
+      end_time = sprintf("%02d:%02d", end_minute_i %/% 60, end_minute_i %% 60),
+      area = sample(area_candidates, size = n_tow_i, replace = TRUE),
+      depth_mid = depth_mid_i,
+      depth_min = pmin(depth_min_i, depth_max_i),
+      depth_max = pmax(depth_min_i, depth_max_i),
+      duration_min = duration_i,
+      speed_knot = pmin(pmax(rnorm(n_tow_i, mean = 3.1, sd = 0.2), 2.5), 3.5)
+    )
+  }) |>
+  ungroup() |>
+  left_join(year_effect_tbl, by = "year") |>
+  left_join(
+    year_size_cpue |>
+      select(year, size_class, cpue) |>
+      pivot_wider(names_from = size_class, values_from = cpue),
+    by = "year"
+  ) |>
+  mutate(
+    chu_base = chu,
+    dai_base = dai,
+    toku_base = toku,
+    tokudai_base = tokudai,
+    chu = rpois(n(), lambda = pmax(chu_base * chu_mult, 0.1)),
+    dai = rpois(n(), lambda = pmax(dai_base * dai_mult, 0.1)),
+    toku = rpois(n(), lambda = pmax(toku_base * toku_mult, 0.1)),
+    tokudai = rpois(n(), lambda = pmax(tokudai_base * tokudai_mult, 0.1)),
+    ware = rpois(n(), lambda = pmax((dai_base * 0.18 + toku_base * 0.12) * ware_mult, 0.1)),
+    sho = rpois(n(), lambda = pmax((chu_base * 0.45 + 1.2) * sho_mult, 0.1)),
+    shosho = rpois(n(), lambda = pmax((chu_base * 0.25 + 0.8) * shosho_mult, 0.1)),
+    count_total = chu + dai + toku + tokudai + ware + sho + shosho
+  ) |>
+  select(
+    vessel, date, tow_no, start_time, end_time, area, depth_min, depth_max, speed_knot,
+    chu, dai, toku, tokudai, ware, sho, shosho,
+    year, month, ym, duration_min, depth_mid, count_total
+  )
+
+write_csv(akagai_dummy_tows, "data_processed/akagai_dummy_tows.csv")
+
+print(head(akagai_dummy_tows))
+str(akagai_dummy_tows)
+print(summary(akagai_dummy_tows))
+print(table(format(as.Date(akagai_dummy_tows$date), "%Y-%m")))
+print(table(akagai_dummy_tows$vessel))
 
 # -----------------------------------------
 # 5. 確認用プロット
@@ -169,4 +257,5 @@ cat("\n=== saved files ===\n")
 cat("data_processed/year_total_cpue_extracted.csv\n")
 cat("data_processed/year_size_cpue_extracted.csv\n")
 cat("data_processed/ym_counts_extracted.csv\n")
+cat("data_processed/akagai_dummy_tows.csv\n")
 cat("data_processed/extracted_figure_data.rds\n")
