@@ -129,17 +129,6 @@ vessel_code_tbl <- tibble(
   shipCode = c(1L, 2L, 3L, 4L, 5L)
 )
 
-year_effect_tbl <- tibble(
-  year = c(2020L, 2021L, 2022L, 2023L, 2024L),
-  chu_mult = c(0.85, 0.95, 1.00, 1.15, 1.00),
-  dai_mult = c(0.85, 0.95, 1.00, 1.20, 1.05),
-  toku_mult = c(0.80, 0.95, 1.00, 1.20, 1.05),
-  tokudai_mult = c(0.75, 0.90, 1.00, 1.10, 1.30),
-  ware_mult = c(0.95, 1.00, 1.00, 1.05, 1.00),
-  sho_mult = c(1.00, 1.00, 1.00, 1.05, 0.95),
-  shosho_mult = c(1.00, 1.00, 1.00, 1.05, 0.95)
-)
-
 # サイズ別の水深-CPUE 2点から直線効果を作る
 depth_line_tbl <- tibble(
   size_class = c("chu", "dai", "toku", "tokudai"),
@@ -196,7 +185,6 @@ akagai_dummy_tows <- ym_counts |>
     )
   }) |>
   ungroup() |>
-  left_join(year_effect_tbl, by = "year") |>
   left_join(
     year_size_cpue |>
       select(year, size_class, cpue) |>
@@ -217,13 +205,13 @@ akagai_dummy_tows <- ym_counts |>
     depth_eff_dai = depth_eff_dai_raw / mean(depth_eff_dai_raw, na.rm = TRUE),
     depth_eff_toku = depth_eff_toku_raw / mean(depth_eff_toku_raw, na.rm = TRUE),
     depth_eff_tokudai = depth_eff_tokudai_raw / mean(depth_eff_tokudai_raw, na.rm = TRUE),
-    chu = rpois(n(), lambda = pmax(chu_base * chu_mult * depth_eff_chu, 0.1)),
-    dai = rpois(n(), lambda = pmax(dai_base * dai_mult * depth_eff_dai, 0.1)),
-    toku = rpois(n(), lambda = pmax(toku_base * toku_mult * depth_eff_toku, 0.1)),
-    tokudai = rpois(n(), lambda = pmax(tokudai_base * tokudai_mult * depth_eff_tokudai, 0.1)),
-    ware = rpois(n(), lambda = pmax((dai * 0.06 + toku * 0.04) * ware_mult, 0.1)),
-    sho = rpois(n(), lambda = pmax((chu_base * 0.45 + 1.2) * sho_mult * sho_count_scale / chu_count_scale, 0.1)),
-    shosho = rpois(n(), lambda = pmax((chu_base * 0.25 + 0.8) * shosho_mult * shosho_count_scale / chu_count_scale, 0.1)),
+    chu = rpois(n(), lambda = pmax(chu_base * depth_eff_chu, 0.1)),
+    dai = rpois(n(), lambda = pmax(dai_base * depth_eff_dai, 0.1)),
+    toku = rpois(n(), lambda = pmax(toku_base * depth_eff_toku, 0.1)),
+    tokudai = rpois(n(), lambda = pmax(tokudai_base * depth_eff_tokudai, 0.1)),
+    ware = rpois(n(), lambda = pmax((dai * 0.06 + toku * 0.04), 0.1)),
+    sho = rpois(n(), lambda = pmax((chu_base * 0.45 + 1.2) * sho_count_scale / chu_count_scale, 0.1)),
+    shosho = rpois(n(), lambda = pmax((chu_base * 0.25 + 0.8) * shosho_count_scale / chu_count_scale, 0.1)),
     count_total = chu + dai + toku + tokudai + ware + sho + shosho,
     shipCode = vessel_code_tbl$shipCode[match(vessel, vessel_code_tbl$vessel)],
     year_reiwa = year - 2018L,
@@ -290,5 +278,153 @@ p3 <- ggplot(ym_counts, aes(x = ym, y = n_tow)) +
 
 print(p3)
 
+# -----------------------------------------
+# 6. 検証
+# -----------------------------------------
+count_scale_tbl <- tibble(
+  size_class = c("chu", "dai", "toku", "tokudai"),
+  count_scale = c(150, 150, 126, 126)
+)
+
+year_mean_check <- akagai_dummy_tows |>
+  mutate(
+    year = year_reiwa + 2018L
+  ) |>
+  pivot_longer(
+    cols = c(chu, dai, toku, tokudai),
+    names_to = "size_class",
+    values_to = "count_obs"
+  ) |>
+  left_join(count_scale_tbl, by = "size_class") |>
+  left_join(
+    year_size_cpue |>
+      rename(cpue_target = cpue),
+    by = c("year", "size_class")
+  ) |>
+  mutate(
+    cpue_backcalc = count_obs / count_scale
+  ) |>
+  group_by(year, size_class) |>
+  summarise(
+    n_tow = n(),
+    mean_count_obs = mean(count_obs, na.rm = TRUE),
+    mean_cpue_backcalc = mean(cpue_backcalc, na.rm = TRUE),
+    sd_cpue_backcalc = sd(cpue_backcalc, na.rm = TRUE),
+    cpue_target = mean(cpue_target, na.rm = TRUE),
+    diff = mean_cpue_backcalc - cpue_target,
+    rel_error = if_else(abs(cpue_target) > 1e-12, diff / cpue_target, NA_real_),
+    rel_error_pct = 100 * rel_error,
+    .groups = "drop"
+  )
+
+write_csv(year_mean_check, "PrepareDummyData/data_processed/year_mean_check.csv")
+
+cat("\n=== Year-by-size comparison ===\n")
+print(year_mean_check)
+
+cat("\n=== Summary of absolute relative error (%) ===\n")
+year_mean_check |>
+  summarise(
+    mean_abs_rel_error_pct = mean(abs(rel_error_pct), na.rm = TRUE),
+    max_abs_rel_error_pct = max(abs(rel_error_pct), na.rm = TRUE)
+  ) |>
+  print()
+
+cat("\n=== By size class: mean absolute relative error (%) ===\n")
+year_mean_check |>
+  group_by(size_class) |>
+  summarise(
+    mean_abs_rel_error_pct = mean(abs(rel_error_pct), na.rm = TRUE),
+    max_abs_rel_error_pct = max(abs(rel_error_pct), na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  print()
+
+verify_scatter <- ggplot(year_mean_check, aes(x = cpue_target, y = mean_cpue_backcalc)) +
+  geom_abline(slope = 1, intercept = 0, linetype = 2) +
+  geom_point(size = 2) +
+  facet_wrap(~ size_class, scales = "free") +
+  labs(
+    x = "Target CPUE",
+    y = "Reconstructed mean CPUE"
+  )
+
+print(verify_scatter)
+
+verify_year_series <- year_mean_check |>
+  select(year, size_class, cpue_target, mean_cpue_backcalc) |>
+  pivot_longer(
+    cols = c(cpue_target, mean_cpue_backcalc),
+    names_to = "series",
+    values_to = "cpue"
+  ) |>
+  ggplot(aes(x = year, y = cpue, color = series, group = series)) +
+  geom_line() +
+  geom_point(size = 2) +
+  facet_wrap(~ size_class, scales = "free_y") +
+  labs(
+    x = "Year",
+    y = "CPUE",
+    color = "Series"
+  )
+
+print(verify_year_series)
+
+verify_relative_error <- ggplot(year_mean_check, aes(x = factor(year), y = rel_error_pct)) +
+  geom_hline(yintercept = 0) +
+  geom_col() +
+  facet_wrap(~ size_class, scales = "free_y") +
+  labs(
+    x = "Year",
+    y = "Relative error (%)"
+  )
+
+print(verify_relative_error)
+
+if (all(c("depth_eff_chu", "depth_eff_dai", "depth_eff_toku", "depth_eff_tokudai") %in% names(akagai_dummy_tows))) {
+  depth_effect_long <- akagai_dummy_tows |>
+    mutate(
+      year = year_reiwa + 2018L
+    ) |>
+    select(year, depth_eff_chu, depth_eff_dai, depth_eff_toku, depth_eff_tokudai) |>
+    pivot_longer(
+      cols = starts_with("depth_eff_"),
+      names_to = "size_class",
+      values_to = "depth_effect"
+    ) |>
+    mutate(
+      size_class = sub("^depth_eff_", "", size_class)
+    ) |>
+    group_by(year, size_class) |>
+    summarise(
+      mean_depth_effect = mean(depth_effect, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  verify_depth_effect <- ggplot(depth_effect_long, aes(x = year, y = mean_depth_effect, group = 1)) +
+    geom_line() +
+    geom_point(size = 2) +
+    facet_wrap(~ size_class, scales = "free_y") +
+    labs(
+      x = "Year",
+      y = "Mean depth effect"
+    )
+
+  print(verify_depth_effect)
+
+  ggsave("PrepareDummyData/data_processed/verify_depth_effect_by_year.png", verify_depth_effect, width = 10, height = 6, dpi = 150)
+}
+
+ggsave("PrepareDummyData/data_processed/verify_target_vs_reconstructed.png", verify_scatter, width = 10, height = 6, dpi = 150)
+ggsave("PrepareDummyData/data_processed/verify_year_series.png", verify_year_series, width = 10, height = 6, dpi = 150)
+ggsave("PrepareDummyData/data_processed/verify_relative_error.png", verify_relative_error, width = 10, height = 6, dpi = 150)
+
 cat("\n=== saved files ===\n")
 cat("PrepareDummyData/data_processed/akagai_dummy_tows.csv\n")
+cat("PrepareDummyData/data_processed/year_mean_check.csv\n")
+cat("PrepareDummyData/data_processed/verify_target_vs_reconstructed.png\n")
+cat("PrepareDummyData/data_processed/verify_year_series.png\n")
+cat("PrepareDummyData/data_processed/verify_relative_error.png\n")
+if (exists("verify_depth_effect")) {
+  cat("PrepareDummyData/data_processed/verify_depth_effect_by_year.png\n")
+}
