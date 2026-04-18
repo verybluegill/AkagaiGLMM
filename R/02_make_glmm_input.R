@@ -6,24 +6,32 @@
 source(file.path("R", "00_load_packages.R"))
 
 load_project_packages(
-  required_pkgs = c("tidyverse", "lubridate"),
+  required_pkgs = c("tidyverse", "lubridate", "readxl"),
   optional_pkgs = character()
 )
 
 ensure_project_dirs()
 
-input_path <- file.path("PrepareDummyData", "data_processed", "akagai_dummy_tows.csv")
 output_path <- file.path("data_processed", "akagai_glmm_input.csv")
-
-if (!file.exists(input_path)) {
-  stop("Input file not found: ", input_path)
-}
-
-raw_input <- readr::read_csv(
-  input_path,
-  col_types = readr::cols(.default = readr::col_character()),
-  show_col_types = FALSE
+input_excel_path <- c(
+  file.path("data_raw", "Akagai_sheet.xlsx"),
+  "Akagai_sheet.xlsx",
+  file.path("ActualData", "Akagai_sheet.xlsx")
 )
+input_csv_path <- c(
+  file.path("PrepareDummyData", "data_processed", "akagai_dummy_tows.csv"),
+  file.path("data_processed", "akagai_glmm_input.csv")
+)
+
+pick_first_existing_path <- function(paths) {
+  matched <- paths[file.exists(paths)]
+
+  if (length(matched) == 0) {
+    return(NULL)
+  }
+
+  matched[[1]]
+}
 
 pick_first_existing <- function(data, candidates) {
   matched <- candidates[candidates %in% names(data)]
@@ -68,33 +76,209 @@ coalesce_vector <- function(...) {
 }
 
 parse_duration_min <- function(data) {
-  duration_min <- pick_first_existing(data, c("duration_min"))
-
-  if (!is.null(duration_min)) {
-    return(as.numeric(duration_min))
-  }
-
-  duration_time <- pick_first_existing(data, c("duration_time"))
-
-  if (is.null(duration_time)) {
+  if (is.null(data)) {
     return(NULL)
   }
 
-  duration_split <- stringr::str_split_fixed(as.character(duration_time), ":", 3)
-  duration_hour <- suppressWarnings(as.numeric(duration_split[, 1]))
-  duration_minute <- suppressWarnings(as.numeric(duration_split[, 2]))
-  duration_second <- suppressWarnings(as.numeric(duration_split[, 3]))
-  duration_second[is.na(duration_second)] <- 0
+  # Excel の曳網時間は日単位の数値、POSIXt、hms、文字列 HH:MM のいずれでも来うるので、
+  # ここで一度すべて「分」の numeric にそろえる
+  if (inherits(data, "difftime")) {
+    return(as.numeric(data, units = "mins"))
+  }
 
-  duration_hour * 60 + duration_minute + duration_second / 60
+  if (inherits(data, "POSIXt")) {
+    data_chr <- format(data, "%H:%M:%S")
+    duration_split <- stringr::str_split_fixed(data_chr, ":", 3)
+    duration_hour <- suppressWarnings(as.numeric(duration_split[, 1]))
+    duration_minute <- suppressWarnings(as.numeric(duration_split[, 2]))
+    duration_second <- suppressWarnings(as.numeric(duration_split[, 3]))
+    duration_second[is.na(duration_second)] <- 0
+
+    return(duration_hour * 60 + duration_minute + duration_second / 60)
+  }
+
+  if (inherits(data, "hms")) {
+    return(as.numeric(data) / 60)
+  }
+
+  if (is.numeric(data)) {
+    out <- as.numeric(data)
+    out[!is.na(out) & out < 1] <- out[!is.na(out) & out < 1] * 24 * 60
+    return(out)
+  }
+
+  data_chr <- trimws(as.character(data))
+  data_chr[data_chr %in% c("", "NA", "NaN")] <- NA_character_
+
+  suppressWarnings(data_num <- as.numeric(data_chr))
+
+  if (any(!is.na(data_num))) {
+    out <- data_num
+    out[!is.na(out) & out < 1] <- out[!is.na(out) & out < 1] * 24 * 60
+    colon_idx <- stringr::str_detect(data_chr, ":")
+    out[colon_idx] <- NA_real_
+
+    if (all(!colon_idx | is.na(out))) {
+      duration_split <- stringr::str_split_fixed(data_chr, ":", 3)
+      duration_hour <- suppressWarnings(as.numeric(duration_split[, 1]))
+      duration_minute <- suppressWarnings(as.numeric(duration_split[, 2]))
+      duration_second <- suppressWarnings(as.numeric(duration_split[, 3]))
+      duration_second[is.na(duration_second)] <- 0
+      out[colon_idx] <- duration_hour[colon_idx] * 60 + duration_minute[colon_idx] + duration_second[colon_idx] / 60
+    }
+
+    return(out)
+  }
+
+  if (any(stringr::str_detect(data_chr, ":"))) {
+    duration_split <- stringr::str_split_fixed(data_chr, ":", 3)
+    duration_hour <- suppressWarnings(as.numeric(duration_split[, 1]))
+    duration_minute <- suppressWarnings(as.numeric(duration_split[, 2]))
+    duration_second <- suppressWarnings(as.numeric(duration_split[, 3]))
+    duration_second[is.na(duration_second)] <- 0
+
+    return(duration_hour * 60 + duration_minute + duration_second / 60)
+  }
+
+  rep(NA_real_, length(data_chr))
 }
 
 get_numeric_or_zero <- function(data, column_name) {
   if (column_name %in% names(data)) {
-    return(as.numeric(data[[column_name]]))
+    out <- suppressWarnings(as.numeric(data[[column_name]]))
+    out[is.na(out)] <- 0
+    return(out)
   }
 
   rep(0, nrow(data))
+}
+
+find_name_by_pattern <- function(data, patterns) {
+  nm <- names(data)
+
+  for (pat in patterns) {
+    matched <- nm[stringr::str_detect(nm, stringr::regex(pat))]
+
+    if (length(matched) > 0) {
+      return(matched[[1]])
+    }
+  }
+
+  NULL
+}
+
+pick_by_pattern <- function(data, patterns) {
+  matched_name <- find_name_by_pattern(data, patterns)
+
+  if (is.null(matched_name)) {
+    return(NULL)
+  }
+
+  data[[matched_name]]
+}
+
+pick_by_pattern_or_na <- function(data, patterns, n) {
+  matched <- pick_by_pattern(data, patterns)
+
+  if (is.null(matched)) {
+    return(rep(NA, n))
+  }
+
+  matched
+}
+
+input_path <- pick_first_existing_path(input_excel_path)
+input_type <- "excel"
+
+if (is.null(input_path)) {
+  input_path <- pick_first_existing_path(input_csv_path)
+  input_type <- "csv"
+}
+
+if (is.null(input_path)) {
+  stop("Input file not found in any configured Excel/CSV path.")
+}
+
+if (identical(input_type, "excel")) {
+  excel_input <- readxl::read_excel(input_path, sheet = "sheet1")
+
+  excel_fill_cols <- c(
+    find_name_by_pattern(excel_input, c("^船名", "shipCode")),
+    find_name_by_pattern(excel_input, c("^年（令和）$", "^年\\(令和\\)$", "令和")),
+    find_name_by_pattern(excel_input, c("^月$")),
+    find_name_by_pattern(excel_input, c("^日$"))
+  )
+  excel_fill_cols <- unique(excel_fill_cols[!is.na(excel_fill_cols)])
+
+  if (length(excel_fill_cols) > 0) {
+    excel_input <- excel_input |>
+      tidyr::fill(dplyr::all_of(excel_fill_cols), .direction = "down")
+  }
+
+  ship_code_value <- suppressWarnings(as.integer(pick_by_pattern(excel_input, c("^船名", "shipCode"))))
+  year_reiwa_value <- suppressWarnings(as.integer(pick_by_pattern(excel_input, c("^年（令和）$", "^年\\(令和\\)$", "令和"))))
+  month_value_excel <- suppressWarnings(as.integer(pick_by_pattern(excel_input, c("^月$"))))
+  day_value_excel <- suppressWarnings(as.integer(pick_by_pattern(excel_input, c("^日$"))))
+  area_original_value <- pick_by_pattern(excel_input, c("^漁場1"))
+  area_start_value <- suppressWarnings(as.numeric(pick_by_pattern(excel_input, c("^曳網を開始した漁区の番号$"))))
+  area_end_value <- suppressWarnings(as.numeric(pick_by_pattern(excel_input, c("^曳網を終了した漁区の番号$"))))
+  depth_min_value <- suppressWarnings(as.numeric(pick_by_pattern(excel_input, c("^水深\\(m\\)浅い側$"))))
+  depth_max_value <- suppressWarnings(as.numeric(pick_by_pattern(excel_input, c("^水深\\(m\\)深い側$"))))
+  duration_time_value <- pick_by_pattern(excel_input, c("^曳網時間$"))
+  total_reported_value <- suppressWarnings(as.numeric(pick_by_pattern(excel_input, c("^漁獲個数（合計）$", "^漁獲個数\\(合計\\)$", "漁獲個数.*合計"))))
+
+  # 実データの先頭列は見た目は船名だが実体は shipCode なので、ここでコード→船名へ固定変換する
+  vessel_value_excel <- dplyr::case_when(
+    ship_code_value == 1L ~ "\u7a32\u8377\u4e38",
+    ship_code_value == 2L ~ "\u7b2c\u516b\u6b63\u5229\u4e38",
+    ship_code_value == 3L ~ "\u6d77\u5e78\u4e38",
+    ship_code_value == 4L ~ "\u6e05\u7adc\u4e38",
+    ship_code_value == 5L ~ "\u5927\u6210\u4e38",
+    TRUE ~ as.character(ship_code_value)
+  )
+
+  duration_min_value_excel <- parse_duration_min(duration_time_value)
+  year_value_excel <- year_reiwa_value + 2018L
+
+  raw_input <- tibble(
+    tow_id = seq_len(nrow(excel_input)),
+    date = as.Date(sprintf("%04d-%02d-%02d", year_value_excel, month_value_excel, day_value_excel)),
+    year = year_value_excel,
+    month = month_value_excel,
+    area = as.character(area_start_value),
+    vessel = vessel_value_excel,
+    duration_min = duration_min_value_excel,
+    effort = duration_min_value_excel,
+    tokudai = suppressWarnings(as.numeric(pick_by_pattern_or_na(excel_input, c("^特大\\(8\\.6-\\)$", "^特大"), nrow(excel_input)))),
+    toku = suppressWarnings(as.numeric(pick_by_pattern_or_na(excel_input, c("^特\\(8\\.1-8\\.5\\)$", "^特\\("), nrow(excel_input)))),
+    dai = suppressWarnings(as.numeric(pick_by_pattern_or_na(excel_input, c("^大\\(7\\.6-8\\.0\\)$", "^大\\("), nrow(excel_input)))),
+    chu = suppressWarnings(as.numeric(pick_by_pattern_or_na(excel_input, c("^中\\(7\\.1-7\\.5\\)$", "^中\\("), nrow(excel_input)))),
+    ware = suppressWarnings(as.numeric(pick_by_pattern_or_na(excel_input, c("^割れ貝$"), nrow(excel_input)))),
+    sho = suppressWarnings(as.numeric(pick_by_pattern_or_na(excel_input, c("^小\\(7\\.0-5\\.1\\)$", "^小\\("), nrow(excel_input)))),
+    shosho = suppressWarnings(as.numeric(pick_by_pattern_or_na(excel_input, c("^小小\\(-5\\.0\\)$", "^小小"), nrow(excel_input)))),
+    depth = dplyr::case_when(
+      !is.na(depth_min_value) & !is.na(depth_max_value) ~ (depth_min_value + depth_max_value) / 2,
+      !is.na(depth_min_value) ~ depth_min_value,
+      !is.na(depth_max_value) ~ depth_max_value,
+      TRUE ~ NA_real_
+    ),
+    shipCode = ship_code_value,
+    year_reiwa = year_reiwa_value,
+    day = day_value_excel,
+    original_area = as.character(area_original_value),
+    original_vessel = as.character(ship_code_value),
+    total_reported = total_reported_value,
+    area_end = area_end_value
+  ) |>
+    mutate(
+      effort = if_else(is.na(effort) | !is.finite(effort) | effort <= 0, 1, effort)
+    )
+} else {
+  raw_input <- readr::read_csv(
+    input_path,
+    col_types = readr::cols(.default = readr::col_character()),
+    show_col_types = FALSE
+  )
 }
 
 year_value <- pick_first_existing(raw_input, c("year"))
@@ -112,7 +296,10 @@ if (is.null(vessel_value) && "shipCode" %in% names(raw_input)) {
   vessel_value <- paste0("ship_", raw_input$shipCode)
 }
 
-duration_min_value <- parse_duration_min(raw_input)
+duration_min_value <- coalesce_vector(
+  parse_duration_min(pick_first_existing(raw_input, c("duration_min"))),
+  parse_duration_min(pick_first_existing(raw_input, c("duration_time")))
+)
 depth_value <- pick_first_existing(raw_input, c("depth", "depth_mid"))
 
 if (is.null(depth_value) && all(c("depth_min", "depth_max") %in% names(raw_input))) {
@@ -145,6 +332,8 @@ if (is.null(effort_value)) {
   effort_value <- rep(1, nrow(raw_input))
 }
 
+effort_value[is.na(effort_value) | !is.finite(effort_value) | effort_value <= 0] <- 1
+
 glmm_input <- raw_input |>
   mutate(
     tow_id = if ("tow_id" %in% names(raw_input)) raw_input$tow_id else seq_len(n()),
@@ -159,10 +348,11 @@ glmm_input <- raw_input |>
     toku = get_numeric_or_zero(raw_input, "toku"),
     dai = get_numeric_or_zero(raw_input, "dai"),
     chu = get_numeric_or_zero(raw_input, "chu"),
+    ware = get_numeric_or_zero(raw_input, "ware"),
     sho = get_numeric_or_zero(raw_input, "sho"),
     shosho = get_numeric_or_zero(raw_input, "shosho"),
-    # count_total の定義はサイズ別個体数の合計に固定する
-    count_total = tokudai + toku + dai + chu + sho + shosho,
+    # count_total の定義はサイズ別個体数の合計に固定し、実データでは ware も含める
+    count_total = tokudai + toku + dai + chu + ware + sho + shosho,
     depth = if (is.null(depth_value)) NA_real_ else as.numeric(depth_value),
     shipCode = pick_first_existing_or_na(raw_input, c("shipCode"), n()),
     year_reiwa = coalesce_vector(
@@ -173,14 +363,20 @@ glmm_input <- raw_input |>
       pick_first_existing(raw_input, c("day")),
       as.integer(lubridate::day(date))
     ),
-    ware = pick_first_existing_or_na(raw_input, c("ware"), n()),
-    original_area = as.character(area_value),
-    original_vessel = as.character(vessel_value)
+    total_reported = suppressWarnings(as.numeric(pick_first_existing_or_na(raw_input, c("total_reported", "count_total_raw"), n()))),
+    original_area = as.character(coalesce_vector(
+      pick_first_existing(raw_input, c("original_area")),
+      area_value
+    )),
+    original_vessel = as.character(coalesce_vector(
+      pick_first_existing(raw_input, c("original_vessel")),
+      vessel_value
+    ))
   ) |>
   select(
     date, year, month, area, vessel, effort, count_total,
     tokudai, toku, dai, chu, sho, shosho,
-    tow_id, depth, duration_min, shipCode, year_reiwa, day, ware, original_area, original_vessel
+    tow_id, depth, duration_min, shipCode, year_reiwa, day, ware, total_reported, original_area, original_vessel
   )
 
 # required_cols は GLMM 実行前に最低限そろっているべき列
@@ -223,6 +419,9 @@ print(table(glmm_input$year))
 cat("\n=== table(vessel) ===\n")
 print(table(glmm_input$vessel))
 
+cat("\n=== table(shipCode) ===\n")
+print(table(glmm_input$shipCode, useNA = "ifany"))
+
 cat("\n=== zero_ratio_count_total ===\n")
 print(mean(glmm_input$count_total == 0))
 
@@ -255,6 +454,28 @@ write_csv(year_vessel_tbl, file.path("output", "tables", "check_n_year_vessel.cs
 
 cat("\n=== summary(count_total) ===\n")
 print(summary(glmm_input$count_total))
+
+cat("\n=== summary(duration_min) ===\n")
+print(tibble(
+  min = min(glmm_input$duration_min, na.rm = TRUE),
+  median = stats::median(glmm_input$duration_min, na.rm = TRUE),
+  mean = mean(glmm_input$duration_min, na.rm = TRUE),
+  max = max(glmm_input$duration_min, na.rm = TRUE)
+))
+
+if ("total_reported" %in% names(glmm_input) && any(!is.na(glmm_input$total_reported))) {
+  total_diff <- glmm_input$count_total - glmm_input$total_reported
+
+  cat("\n=== reported_vs_recalculated_total ===\n")
+  print(tibble(
+    n_compared = sum(!is.na(glmm_input$total_reported)),
+    n_diff = sum(total_diff != 0, na.rm = TRUE),
+    match_rate = mean(total_diff == 0, na.rm = TRUE),
+    diff_min = min(total_diff, na.rm = TRUE),
+    diff_mean = mean(total_diff, na.rm = TRUE),
+    diff_max = max(total_diff, na.rm = TRUE)
+  ))
+}
 
 cat("\n=== mean_var_ratio(count_total) ===\n")
 print(tibble(
@@ -300,6 +521,7 @@ ggsave(
 )
 
 cat("\n=== saved files ===\n")
+cat("input_path=", input_path, "\n", sep = "")
 cat(output_path, "\n", sep = "")
 cat(file.path("output", "tables", "check_n_year_month.csv"), "\n", sep = "")
 cat(file.path("output", "tables", "check_n_year_area.csv"), "\n", sep = "")
