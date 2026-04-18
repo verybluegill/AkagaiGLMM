@@ -16,6 +16,7 @@ ensure_project_dirs()
 input_path <- file.path("data_processed", "akagai_glmm_input.csv")
 variance_summary_path <- file.path("output", "tables", "glmm_by_size_variance_summary.csv")
 run_status_path <- file.path("output", "tables", "glmm_by_size_run_status.csv")
+row_summary_by_year_path <- file.path("output", "tables", "check_by_size_glmm_row_summary_by_year.csv")
 
 if (!file.exists(input_path)) {
   stop("Input file not found: ", input_path)
@@ -23,7 +24,7 @@ if (!file.exists(input_path)) {
 
 glmm_input <- readr::read_csv(input_path, show_col_types = FALSE)
 
-required_cols <- c("year", "month", "area", "vessel", "effort", "chu", "dai", "toku", "tokudai")
+required_cols <- c("year", "month", "area", "vessel", "effort_glmm", "chu", "dai", "toku", "tokudai")
 missing_cols <- setdiff(required_cols, names(glmm_input))
 
 if (length(missing_cols) > 0) {
@@ -32,18 +33,66 @@ if (length(missing_cols) > 0) {
   stop("Required columns are missing.")
 }
 
-if (any(is.na(glmm_input$effort)) || any(!is.finite(glmm_input$effort)) || any(glmm_input$effort <= 0)) {
-  stop("effort must be finite and > 0 before fitting the GLMM.")
+glmm_input <- glmm_input |>
+  mutate(
+    effort_glmm = as.numeric(effort_glmm)
+  )
+
+if ("flag_use_for_main_glmm" %in% names(glmm_input)) {
+  glmm_input <- glmm_input |>
+    mutate(flag_use_for_main_glmm = as.logical(flag_use_for_main_glmm))
+} else {
+  glmm_input <- glmm_input |>
+    mutate(
+      flag_use_for_main_glmm = year %in% 2020:2024 &
+        !is.na(area) &
+        area != "" &
+        !is.na(effort_glmm) &
+        is.finite(effort_glmm) &
+        effort_glmm > 0
+    )
 }
 
+n_input <- nrow(glmm_input)
 glmm_dat <- glmm_input |>
+  filter(flag_use_for_main_glmm) |>
   mutate(
     year = factor(year),
     month = factor(month, levels = sort(unique(month))),
     area = factor(area),
     vessel = factor(vessel),
-    effort = as.numeric(effort)
+    effort_glmm = as.numeric(effort_glmm)
   )
+
+n_used <- nrow(glmm_dat)
+n_dropped <- n_input - n_used
+dropped_prop <- if (n_input == 0) NA_real_ else n_dropped / n_input
+
+row_summary_by_year <- glmm_input |>
+  group_by(year) |>
+  summarise(
+    n_input = n(),
+    n_used = sum(flag_use_for_main_glmm),
+    n_dropped = n_input - n_used,
+    .groups = "drop"
+  )
+
+write_csv(row_summary_by_year, row_summary_by_year_path)
+
+cat("\n=== GLMM row summary ===\n")
+cat("n_input=", n_input, "\n", sep = "")
+cat("n_used=", n_used, "\n", sep = "")
+cat("n_dropped=", n_dropped, "\n", sep = "")
+cat("dropped_prop=", dropped_prop, "\n", sep = "")
+print(row_summary_by_year, n = nrow(row_summary_by_year))
+
+if (n_used == 0) {
+  stop("No rows available for the by-size GLMM after filtering.")
+}
+
+if (any(is.na(glmm_dat$effort_glmm)) || any(!is.finite(glmm_dat$effort_glmm)) || any(glmm_dat$effort_glmm <= 0)) {
+  stop("effort_glmm must be finite and > 0 in the filtered data.")
+}
 
 size_vars <- c("chu", "dai", "toku", "tokudai")
 
@@ -63,6 +112,8 @@ variance_summary_tbl <- tibble(
   vessel_variance = numeric(),
   vessel_sd = numeric(),
   converged = logical(),
+  fit_convergence_code = integer(),
+  pdHess = logical(),
   warning_message = character()
 )
 
@@ -95,7 +146,7 @@ build_year_index_fallback <- function(fit_obj, data_obj) {
     month = factor(levels(data_obj$month), levels = levels(data_obj$month)),
     area = factor(levels(data_obj$area)[1], levels = levels(data_obj$area)),
     vessel = factor(levels(data_obj$vessel)[1], levels = levels(data_obj$vessel)),
-    effort = 1
+    effort_glmm = 1
   )
 
   pred_grid |>
@@ -134,7 +185,7 @@ for (sv in size_vars) {
 
         # size-specific response に対して total と同じ線形予測子を使う
         fit_formula <- as.formula(
-          paste0(sv, " ~ year + month + offset(log(effort)) + (1 | area) + (1 | vessel)")
+          paste0(sv, " ~ year + month + offset(log(effort_glmm)) + (1 | area) + (1 | vessel)")
         )
 
         fit_i <- glmmTMB(
@@ -158,7 +209,7 @@ for (sv in size_vars) {
         }
 
         if (isTRUE(optional_pkgs[["emmeans"]])) {
-          emm_year_i <- emmeans::emmeans(fit_i, specs = ~ year, type = "response")
+          emm_year_i <- emmeans::emmeans(fit_i, specs = ~ year, at = list(effort_glmm = 1), type = "response")
           emm_year_tbl <- as.data.frame(emm_year_i)
         } else {
           emm_year_tbl <- build_year_index_fallback(fit_i, glmm_dat_i)
@@ -203,6 +254,16 @@ for (sv in size_vars) {
         vessel_stats <- extract_re_sd(vc_cond, "vessel")
         disp_parameter <- tryCatch(as.numeric(sigma(fit_i)), error = function(e) NA_real_)
         converged_flag <- isTRUE(fit_i$sdr$pdHess)
+        fit_convergence_code <- fit_i$fit$convergence
+        fit_pdHess <- isTRUE(fit_i$sdr$pdHess)
+
+        cat("\n=== convergence check ===\n")
+        cat("fit_convergence_code=", fit_convergence_code, "\n", sep = "")
+        cat("pdHess=", fit_pdHess, "\n", sep = "")
+
+        if (fit_convergence_code != 0 || !fit_pdHess) {
+          warning(paste0("Convergence issue may exist in fit_", sv))
+        }
 
         variance_summary_tbl <<- bind_rows(
           variance_summary_tbl,
@@ -219,6 +280,8 @@ for (sv in size_vars) {
             vessel_variance = unname(vessel_stats[["variance"]]),
             vessel_sd = unname(vessel_stats[["sd"]]),
             converged = converged_flag,
+            fit_convergence_code = fit_convergence_code,
+            pdHess = fit_pdHess,
             warning_message = paste(unique(warning_messages), collapse = " | ")
           )
         )
@@ -292,3 +355,6 @@ cat(variance_summary_path, "\n", sep = "")
 
 cat("\n=== run status path ===\n")
 cat(run_status_path, "\n", sep = "")
+
+cat("\n=== row summary path ===\n")
+cat(row_summary_by_year_path, "\n", sep = "")

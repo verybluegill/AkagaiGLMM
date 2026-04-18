@@ -16,6 +16,7 @@ input_path <- file.path("data_processed", "akagai_glmm_input.csv")
 fit_path <- file.path("output", "models", "fit_nb_total.rds")
 emm_year_path <- file.path("output", "tables", "emm_year_total.csv")
 index_fig_path <- file.path("output", "figures", "index_total_by_year.png")
+row_summary_by_year_path <- file.path("output", "tables", "check_total_glmm_row_summary_by_year.csv")
 
 if (!file.exists(input_path)) {
   stop("Input file not found: ", input_path)
@@ -23,7 +24,7 @@ if (!file.exists(input_path)) {
 
 glmm_input <- readr::read_csv(input_path, show_col_types = FALSE)
 
-required_cols <- c("year", "month", "area", "vessel", "effort", "count_total")
+required_cols <- c("year", "month", "area", "vessel", "effort_glmm", "count_total")
 missing_cols <- setdiff(required_cols, names(glmm_input))
 
 if (length(missing_cols) > 0) {
@@ -36,22 +37,70 @@ if (any(is.na(glmm_input$count_total))) {
   stop("count_total contains NA.")
 }
 
-if (any(is.na(glmm_input$effort)) || any(!is.finite(glmm_input$effort)) || any(glmm_input$effort <= 0)) {
-  stop("effort must be finite and > 0 before fitting the GLMM.")
+glmm_input <- glmm_input |>
+  mutate(
+    effort_glmm = as.numeric(effort_glmm),
+    count_total = as.numeric(count_total)
+  )
+
+if ("flag_use_for_main_glmm" %in% names(glmm_input)) {
+  glmm_input <- glmm_input |>
+    mutate(flag_use_for_main_glmm = as.logical(flag_use_for_main_glmm))
+} else {
+  glmm_input <- glmm_input |>
+    mutate(
+      flag_use_for_main_glmm = year %in% 2020:2024 &
+        !is.na(area) &
+        area != "" &
+        !is.na(effort_glmm) &
+        is.finite(effort_glmm) &
+        effort_glmm > 0
+    )
 }
 
+n_input <- nrow(glmm_input)
 glmm_dat <- glmm_input |>
+  filter(flag_use_for_main_glmm) |>
   mutate(
     year = factor(year),
     month = factor(month, levels = sort(unique(month))),
     area = factor(area),
     vessel = factor(vessel),
-    effort = as.numeric(effort),
-    count_total = as.numeric(count_total)
+    effort_glmm = as.numeric(effort_glmm)
   )
 
-# 固定効果は year + month、ランダム効果は area と vessel、effort は offset(log(effort)) で入れる
-fit_formula <- count_total ~ year + month + offset(log(effort)) + (1 | area) + (1 | vessel)
+n_used <- nrow(glmm_dat)
+n_dropped <- n_input - n_used
+dropped_prop <- if (n_input == 0) NA_real_ else n_dropped / n_input
+
+row_summary_by_year <- glmm_input |>
+  group_by(year) |>
+  summarise(
+    n_input = n(),
+    n_used = sum(flag_use_for_main_glmm),
+    n_dropped = n_input - n_used,
+    .groups = "drop"
+  )
+
+write_csv(row_summary_by_year, row_summary_by_year_path)
+
+cat("\n=== GLMM row summary ===\n")
+cat("n_input=", n_input, "\n", sep = "")
+cat("n_used=", n_used, "\n", sep = "")
+cat("n_dropped=", n_dropped, "\n", sep = "")
+cat("dropped_prop=", dropped_prop, "\n", sep = "")
+print(row_summary_by_year, n = nrow(row_summary_by_year))
+
+if (n_used == 0) {
+  stop("No rows available for the total GLMM after filtering.")
+}
+
+if (any(is.na(glmm_dat$effort_glmm)) || any(!is.finite(glmm_dat$effort_glmm)) || any(glmm_dat$effort_glmm <= 0)) {
+  stop("effort_glmm must be finite and > 0 in the filtered data.")
+}
+
+# 固定効果は year + month、ランダム効果は area と vessel、effort_glmm は offset(log(effort_glmm)) で入れる
+fit_formula <- count_total ~ year + month + offset(log(effort_glmm)) + (1 | area) + (1 | vessel)
 
 fit_nb_total <- glmmTMB(
   formula = fit_formula,
@@ -64,13 +113,24 @@ saveRDS(fit_nb_total, fit_path)
 cat("\n=== model summary ===\n")
 print(summary(fit_nb_total))
 
+fit_convergence_code <- fit_nb_total$fit$convergence
+fit_pdHess <- isTRUE(fit_nb_total$sdr$pdHess)
+
+cat("\n=== convergence check ===\n")
+cat("fit_convergence_code=", fit_convergence_code, "\n", sep = "")
+cat("pdHess=", fit_pdHess, "\n", sep = "")
+
+if (fit_convergence_code != 0 || !fit_pdHess) {
+  warning("Convergence issue may exist in fit_nb_total")
+}
+
 if (isTRUE(optional_pkgs[["DHARMa"]])) {
   cat("\n=== DHARMa residual diagnostics ===\n")
   print(DHARMa::testDispersion(DHARMa::simulateResiduals(fit_nb_total, plot = FALSE)))
 }
 
 if (isTRUE(optional_pkgs[["emmeans"]])) {
-  emm_year_total <- emmeans::emmeans(fit_nb_total, specs = ~ year, type = "response")
+  emm_year_total <- emmeans::emmeans(fit_nb_total, specs = ~ year, at = list(effort_glmm = 1), type = "response")
   emm_year_total_tbl <- as.data.frame(emm_year_total)
 } else {
   pred_grid <- expand_grid(
@@ -78,7 +138,7 @@ if (isTRUE(optional_pkgs[["emmeans"]])) {
     month = factor(levels(glmm_dat$month), levels = levels(glmm_dat$month)),
     area = factor(levels(glmm_dat$area)[1], levels = levels(glmm_dat$area)),
     vessel = factor(levels(glmm_dat$vessel)[1], levels = levels(glmm_dat$vessel)),
-    effort = 1
+    effort_glmm = 1
   )
 
   emm_year_total_tbl <- pred_grid |>
@@ -122,3 +182,4 @@ cat("\n=== saved files ===\n")
 cat(fit_path, "\n", sep = "")
 cat(emm_year_path, "\n", sep = "")
 cat(index_fig_path, "\n", sep = "")
+cat(row_summary_by_year_path, "\n", sep = "")

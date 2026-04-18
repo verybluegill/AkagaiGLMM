@@ -55,8 +55,11 @@ emm_year_path <- file.path("output", "tables", "emm_year_total_with_depth.csv")
 index_fig_path <- file.path("output", "figures", "index_total_with_depth_by_year.png")
 depth_effect_path <- file.path("output", "tables", "depth_effect_total_with_depth.csv")
 depth_fig_path <- file.path("output", "figures", "depth_effect_total_with_depth.png")
+depth_fig_average_year_path <- file.path("output", "figures", "depth_effect_total_average_over_year_month.png")
 row_summary_by_year_path <- file.path("output", "tables", "check_depth_glmm_row_summary_by_year.csv")
 model_comparison_path <- file.path("output", "tables", "model_comparison_total_with_depth.csv")
+depth_raw_quantiles_path <- file.path("output", "tables", "check_depth_raw_quantiles.csv")
+depth_raw_hist_path <- file.path("output", "figures", "check_hist_depth_raw.png")
 depth_missing_by_year_path <- file.path("output", "tables", "check_depth_missing_by_year.csv")
 depth_missing_by_month_path <- file.path("output", "tables", "check_depth_missing_by_month.csv")
 depth_missing_by_area_path <- file.path("output", "tables", "check_depth_missing_by_area.csv")
@@ -75,7 +78,7 @@ if (!file.exists(input_path)) {
 
 glmm_input <- readr::read_csv(input_path, show_col_types = FALSE)
 
-required_cols <- c("year", "month", "area", "vessel", "count_total", "depth_glmm", "effort_glmm")
+required_cols <- c("year", "month", "area", "vessel", "count_total", "depth_raw", "depth_glmm", "effort_glmm")
 missing_cols <- setdiff(required_cols, names(glmm_input))
 
 if (length(missing_cols) > 0) {
@@ -91,6 +94,7 @@ glmm_dat <- glmm_input |>
     area = factor(area),
     vessel = factor(vessel),
     count_total = as.numeric(count_total),
+    depth_raw = as.numeric(depth_raw),
     depth_glmm = as.numeric(depth_glmm),
     effort_glmm = as.numeric(effort_glmm),
     depth_missing = is.na(depth_glmm),
@@ -101,6 +105,32 @@ glmm_dat <- glmm_input |>
 if (any(is.na(glmm_dat$count_total))) {
   stop("count_total contains NA.")
 }
+
+depth_raw_quantile_probs <- c(0, 0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99, 1)
+depth_raw_quantiles <- tibble(
+  quantile = depth_raw_quantile_probs,
+  depth_raw = as.numeric(stats::quantile(glmm_dat$depth_raw, probs = depth_raw_quantile_probs, na.rm = TRUE, names = FALSE))
+)
+
+write_csv(depth_raw_quantiles, depth_raw_quantiles_path)
+
+depth_raw_hist <- ggplot(glmm_dat, aes(x = depth_raw)) +
+  geom_histogram(bins = 30, color = "white") +
+  labs(
+    x = "Depth raw",
+    y = "Frequency"
+  )
+
+ggsave(
+  filename = depth_raw_hist_path,
+  plot = depth_raw_hist,
+  width = 10,
+  height = 6,
+  dpi = 150
+)
+
+cat("\n=== depth_raw quantiles ===\n")
+print(depth_raw_quantiles)
 
 depth_missing_by_year <- glmm_dat |>
   mutate(year_chr = as.character(year)) |>
@@ -238,13 +268,15 @@ n_area_missing <- sum(is.na(glmm_input$area) | glmm_input$area == "")
 
 glmm_dat <- glmm_dat |>
   mutate(
-    flag_use_for_depth_glmm = !is.na(depth_glmm) &
-      is.finite(depth_glmm) &
+    flag_use_for_main_glmm = if ("flag_use_for_main_glmm" %in% names(glmm_input)) as.logical(glmm_input$flag_use_for_main_glmm) else as.integer(as.character(year)) %in% 2020:2024 &
+      !is.na(area) &
+      as.character(area) != "" &
       !is.na(effort_glmm) &
       is.finite(effort_glmm) &
-      effort_glmm > 0 &
-      !is.na(area) &
-      as.character(area) != ""
+      effort_glmm > 0,
+    flag_use_for_depth_glmm = !is.na(depth_glmm) &
+      is.finite(depth_glmm) &
+      flag_use_for_main_glmm
   )
 
 glmm_dat_depth <- glmm_dat |>
@@ -342,7 +374,7 @@ model_comparison_tbl <- tibble(
   n_used = c(n_used_for_depth_glmm, n_used_for_depth_glmm),
   n_dropped = c(n_dropped_for_depth_glmm, n_dropped_for_depth_glmm),
   dropped_prop = c(dropped_prop_for_depth_glmm, dropped_prop_for_depth_glmm),
-  interpretation = c("baseline on depth-available subset", "sensitivity model with depth")
+  interpretation = c("baseline model on the depth-available subset for sensitivity comparison", "sensitivity model that adds depth on the same subset")
 )
 
 write_csv(model_comparison_tbl, model_comparison_path)
@@ -534,6 +566,47 @@ ggsave(
   dpi = 150
 )
 
+depth_plot_grid_average_year <- expand_grid(
+  year = factor(levels(glmm_dat_depth$year), levels = levels(glmm_dat_depth$year)),
+  month = factor(levels(glmm_dat_depth$month), levels = levels(glmm_dat_depth$month)),
+  depth_glmm = depth_seq
+) |>
+  mutate(
+    depth_glmm_sc = (depth_glmm - depth_glmm_mean) / depth_glmm_sd,
+    effort_glmm = 1,
+    area = factor(levels(glmm_dat_depth$area)[1], levels = levels(glmm_dat_depth$area)),
+    vessel = factor(levels(glmm_dat_depth$vessel)[1], levels = levels(glmm_dat_depth$vessel))
+  )
+
+depth_plot_grid_average_year$predicted_count <- predict(
+  fit_nb_total_depth1,
+  newdata = depth_plot_grid_average_year,
+  type = "response",
+  re.form = NA
+)
+
+depth_plot_dat_average_year <- depth_plot_grid_average_year |>
+  group_by(depth_glmm) |>
+  summarise(
+    predicted_count = mean(predicted_count),
+    .groups = "drop"
+  )
+
+depth_effect_plot_average_year <- ggplot(depth_plot_dat_average_year, aes(x = depth_glmm, y = predicted_count)) +
+  geom_line() +
+  labs(
+    x = "Depth",
+    y = "Predicted count"
+  )
+
+ggsave(
+  filename = depth_fig_average_year_path,
+  plot = depth_effect_plot_average_year,
+  width = 10,
+  height = 6,
+  dpi = 150
+)
+
 cat("\n=== saved files ===\n")
 cat("input_path=", input_path, "\n", sep = "")
 cat("fit_path=", fit_path, "\n", sep = "")
@@ -554,6 +627,9 @@ cat("depth_missing_year_fig_path=", depth_missing_year_fig_path, "\n", sep = "")
 cat("depth_missing_area_fig_path=", depth_missing_area_fig_path, "\n", sep = "")
 cat("depth_effect_path=", depth_effect_path, "\n", sep = "")
 cat("depth_fig_path=", depth_fig_path, "\n", sep = "")
+cat("depth_raw_quantiles_path=", depth_raw_quantiles_path, "\n", sep = "")
+cat("depth_raw_hist_path=", depth_raw_hist_path, "\n", sep = "")
+cat("depth_fig_average_year_path=", depth_fig_average_year_path, "\n", sep = "")
 cat("n_used_for_depth_glmm=", n_used_for_depth_glmm, "\n", sep = "")
 cat("n_dropped_for_depth_glmm=", n_dropped_for_depth_glmm, "\n", sep = "")
 cat("dropped_prop_for_depth_glmm=", dropped_prop_for_depth_glmm, "\n", sep = "")

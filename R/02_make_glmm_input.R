@@ -239,6 +239,12 @@ if (identical(input_type, "excel")) {
 
   duration_min_value_excel <- parse_duration_min(duration_time_value)
   year_value_excel <- year_reiwa_value + 2018L
+  depth_cleaning_value_excel <- dplyr::case_when(
+    !is.na(depth_min_value) & !is.na(depth_max_value) ~ pmin(depth_min_value, depth_max_value),
+    !is.na(depth_min_value) ~ depth_min_value,
+    !is.na(depth_max_value) ~ depth_max_value,
+    TRUE ~ NA_real_
+  )
 
   raw_input <- tibble(
     tow_id = seq_len(nrow(excel_input)),
@@ -262,6 +268,9 @@ if (identical(input_type, "excel")) {
       !is.na(depth_max_value) ~ depth_max_value,
       TRUE ~ NA_real_
     ),
+    depth_min_raw = depth_min_value,
+    depth_max_raw = depth_max_value,
+    depth_cleaning = depth_cleaning_value_excel,
     shipCode = ship_code_value,
     year_reiwa = year_reiwa_value,
     day = day_value_excel,
@@ -301,9 +310,20 @@ duration_min_value <- coalesce_vector(
   parse_duration_min(pick_first_existing(raw_input, c("duration_time")))
 )
 depth_value <- pick_first_existing(raw_input, c("depth", "depth_mid"))
+depth_cleaning_value <- pick_first_existing(raw_input, c("depth_cleaning"))
+depth_min_raw_value <- pick_first_existing(raw_input, c("depth_min_raw", "depth_min"))
+depth_max_raw_value <- pick_first_existing(raw_input, c("depth_max_raw", "depth_max"))
 
 if (is.null(depth_value) && all(c("depth_min", "depth_max") %in% names(raw_input))) {
   depth_value <- (as.numeric(raw_input$depth_min) + as.numeric(raw_input$depth_max)) / 2
+}
+
+if (is.null(depth_cleaning_value) && all(c("depth_min", "depth_max") %in% names(raw_input))) {
+  depth_cleaning_value <- pmin(as.numeric(raw_input$depth_min), as.numeric(raw_input$depth_max))
+}
+
+if (is.null(depth_cleaning_value)) {
+  depth_cleaning_value <- depth_value
 }
 
 date_value <- pick_first_existing(raw_input, c("date"))
@@ -330,10 +350,10 @@ effort_value <- duration_min_value
 
 # effort は曳網時間が取れる場合は duration_min を使い、無い場合のみ 1 を使う
 if (is.null(effort_value)) {
-  effort_value <- rep(1, nrow(raw_input))
+  effort_value <- rep(NA_real_, nrow(raw_input))
 }
 
-effort_value[is.na(effort_value) | !is.finite(effort_value) | effort_value <= 0] <- 1
+effort_value[is.na(effort_value) | !is.finite(effort_value) | effort_value <= 0] <- NA_real_
 
 # depth の GLMM 用妥当範囲。必要に応じて調整
 # raw の depth は保持し、範囲外は depth_glmm で NA 化する
@@ -365,6 +385,9 @@ glmm_input <- raw_input |>
     # count_total の定義はサイズ別個体数の合計に固定し、実データでは ware も含める
     count_total = tokudai + toku + dai + chu + ware + sho + shosho,
     depth = if (is.null(depth_value)) NA_real_ else as.numeric(depth_value),
+    depth_min_raw = if (is.null(depth_min_raw_value)) NA_real_ else as.numeric(depth_min_raw_value),
+    depth_max_raw = if (is.null(depth_max_raw_value)) NA_real_ else as.numeric(depth_max_raw_value),
+    depth_cleaning_raw = if (is.null(depth_cleaning_value)) NA_real_ else as.numeric(depth_cleaning_value),
     shipCode = pick_first_existing_or_na(raw_input, c("shipCode"), n()),
     year_reiwa = coalesce_vector(
       pick_first_existing(raw_input, c("year_reiwa")),
@@ -384,8 +407,10 @@ glmm_input <- raw_input |>
       vessel_value
     )),
     depth_raw = depth,
-    flag_depth_missing = is.na(depth_raw),
-    flag_depth_out_of_range = !is.na(depth_raw) & (depth_raw < depth_min_glmm | depth_raw > depth_max_glmm),
+    # depth の異常値判定は浅い側深度を優先し、浅い側が無い場合のみ depth_raw にフォールバックする
+    depth_flag_base = if_else(!is.na(depth_min_raw), depth_min_raw, depth_raw),
+    flag_depth_missing = is.na(depth_flag_base),
+    flag_depth_out_of_range = !is.na(depth_flag_base) & (depth_flag_base < depth_min_glmm | depth_flag_base > depth_max_glmm),
     flag_depth_bad = flag_depth_missing | flag_depth_out_of_range,
     depth_glmm = if_else(flag_depth_bad, NA_real_, as.numeric(depth_raw)),
     duration_min_raw = duration_min,
@@ -404,7 +429,7 @@ glmm_input <- raw_input |>
     date, year, month, area, vessel, effort, count_total,
     tokudai, toku, dai, chu, sho, shosho,
     tow_id, depth, duration_min, shipCode, year_reiwa, day, ware, total_reported, original_area, original_vessel,
-    depth_raw, depth_glmm, duration_min_raw, duration_min_glmm, effort_raw, effort_glmm,
+    depth_raw, depth_min_raw, depth_max_raw, depth_flag_base, depth_cleaning_raw, depth_glmm, duration_min_raw, duration_min_glmm, effort_raw, effort_glmm,
     flag_depth_missing, flag_depth_out_of_range, flag_depth_bad,
     flag_duration_missing, flag_duration_out_of_range, flag_duration_bad
   )
@@ -429,10 +454,6 @@ if (any(is.na(glmm_input$date))) {
 
 if (any(is.na(glmm_input$count_total))) {
   stop("count_total contains NA.")
-}
-
-if (any(is.na(glmm_input$effort)) || any(!is.finite(glmm_input$effort)) || any(glmm_input$effort <= 0)) {
-  stop("effort must be finite and > 0.")
 }
 
 # -----------------------------------------
@@ -518,6 +539,7 @@ check_year_out_of_range_path <- file.path("output", "tables", "check_year_out_of
 check_numeric_range_summary_path <- file.path("output", "tables", "check_numeric_range_summary.csv")
 check_depth_glmm_na_path <- file.path("output", "tables", "check_depth_glmm_na_rows.csv")
 check_duration_glmm_na_path <- file.path("output", "tables", "check_duration_glmm_na_rows.csv")
+check_main_glmm_dropped_rows_path <- file.path("output", "tables", "check_main_glmm_dropped_rows.csv")
 count_check_cols <- c("chu", "dai", "toku", "tokudai", "ware", "sho", "shosho", "count_total")
 
 glmm_input_check <- glmm_input |>
@@ -549,13 +571,18 @@ glmm_input_check <- glmm_input_check |>
       1,
       function(x) paste(count_check_cols[x], collapse = ",")
     ),
-    flag_year_out_of_range = !(year %in% 2020:2024)
+    flag_year_out_of_range = !(year %in% 2020:2024),
+    flag_effort_glmm_bad = is.na(effort_glmm) | !is.finite(effort_glmm) | effort_glmm <= 0,
+    flag_use_for_main_glmm = !flag_year_out_of_range &
+      !flag_area_missing &
+      !flag_effort_glmm_bad
   )
 
 glmm_input <- glmm_input_check |>
   select(
     all_of(names(glmm_input)),
-    flag_area_missing, flag_non_integer_count, flag_year_out_of_range
+    flag_area_missing, flag_non_integer_count, flag_year_out_of_range,
+    flag_effort_glmm_bad, flag_use_for_main_glmm
   )
 
 write_csv(glmm_input, output_path)
@@ -617,7 +644,7 @@ write_csv(year_out_of_range_rows, check_year_out_of_range_path)
 numeric_summary_cols <- c(
   "depth", "duration_min", "effort", "count_total",
   "chu", "dai", "toku", "tokudai", "ware", "sho", "shosho",
-  "depth_raw", "depth_glmm", "duration_min_raw", "duration_min_glmm", "effort_raw", "effort_glmm"
+  "depth_raw", "depth_min_raw", "depth_max_raw", "depth_flag_base", "depth_glmm", "duration_min_raw", "duration_min_glmm", "effort_raw", "effort_glmm"
 )
 
 numeric_range_summary <- purrr::map_dfr(
@@ -649,7 +676,7 @@ glmm_numeric_range_summary <- numeric_range_summary |>
 cat("\n=== GLMM numeric range summary ===\n")
 print(glmm_numeric_range_summary)
 
-for (col_name in c("depth", "duration_min", "effort", "count_total")) {
+for (col_name in c("depth", "duration_min", "effort", "count_total", "depth_flag_base")) {
   if (col_name %in% names(glmm_input_check)) {
     x <- suppressWarnings(as.numeric(glmm_input_check[[col_name]]))
     x_valid <- x[!is.na(x) & is.finite(x)]
@@ -666,7 +693,7 @@ depth_glmm_na_rows <- glmm_input_check |>
   filter(flag_depth_bad) |>
   select(any_of(c(
     "tow_id", "date", "year", "month", "day", "vessel", "shipCode",
-    "area", "depth_raw", "depth_glmm", "flag_depth_missing", "flag_depth_out_of_range", "count_total"
+    "area", "depth_raw", "depth_min_raw", "depth_max_raw", "depth_flag_base", "depth_glmm", "flag_depth_missing", "flag_depth_out_of_range", "count_total"
   )))
 
 write_csv(depth_glmm_na_rows, check_depth_glmm_na_path)
@@ -674,6 +701,8 @@ write_csv(depth_glmm_na_rows, check_depth_glmm_na_path)
 cat("\n=== depth_glmm NA summary ===\n")
 print(tibble(
   n_depth_glmm_na = nrow(depth_glmm_na_rows),
+  n_depth_flag_base_missing = sum(glmm_input_check$flag_depth_missing),
+  n_depth_out_of_range = sum(glmm_input_check$flag_depth_out_of_range),
   depth_glmm_min_observed = if (all(is.na(glmm_input_check$depth_glmm))) NA_real_ else min(glmm_input_check$depth_glmm, na.rm = TRUE),
   depth_glmm_max_observed = if (all(is.na(glmm_input_check$depth_glmm))) NA_real_ else max(glmm_input_check$depth_glmm, na.rm = TRUE)
 ))
@@ -688,12 +717,30 @@ duration_glmm_na_rows <- glmm_input_check |>
 
 write_csv(duration_glmm_na_rows, check_duration_glmm_na_path)
 
+main_glmm_dropped_rows <- glmm_input_check |>
+  filter(!flag_use_for_main_glmm) |>
+  select(any_of(c(
+    "tow_id", "date", "year", "month", "day", "vessel", "shipCode",
+    "area", "count_total", "duration_min_raw", "duration_min_glmm",
+    "effort_raw", "effort_glmm",
+    "flag_year_out_of_range", "flag_area_missing", "flag_effort_glmm_bad"
+  )))
+
+write_csv(main_glmm_dropped_rows, check_main_glmm_dropped_rows_path)
+
+cat("\n=== main GLMM availability check ===\n")
+cat("n_year_out_of_range = ", sum(glmm_input_check$flag_year_out_of_range), "\n", sep = "")
+cat("n_area_missing = ", sum(glmm_input_check$flag_area_missing), "\n", sep = "")
+cat("n_effort_glmm_bad = ", sum(glmm_input_check$flag_effort_glmm_bad), "\n", sep = "")
+cat("n_main_glmm_dropped = ", nrow(main_glmm_dropped_rows), "\n", sep = "")
+
 cat("\n=== data quality flags summary ===\n")
 print(tibble(
   area_missing_rate = mean(glmm_input_check$flag_area_missing),
   non_integer_count_rate = mean(glmm_input_check$flag_non_integer_count),
   year_out_of_range_rate = mean(glmm_input_check$flag_year_out_of_range),
-  n_no_problem_rows = sum(!(glmm_input_check$flag_area_missing | glmm_input_check$flag_non_integer_count | glmm_input_check$flag_year_out_of_range))
+  effort_glmm_bad_rate = mean(glmm_input_check$flag_effort_glmm_bad),
+  n_no_problem_rows = sum(!(glmm_input_check$flag_area_missing | glmm_input_check$flag_non_integer_count | glmm_input_check$flag_year_out_of_range | glmm_input_check$flag_effort_glmm_bad))
 ))
 
 # -----------------------------------------
@@ -744,5 +791,6 @@ cat(check_year_out_of_range_path, "\n", sep = "")
 cat(check_numeric_range_summary_path, "\n", sep = "")
 cat(check_depth_glmm_na_path, "\n", sep = "")
 cat(check_duration_glmm_na_path, "\n", sep = "")
+cat(check_main_glmm_dropped_rows_path, "\n", sep = "")
 cat(file.path("output", "figures", "check_effort_year_month.png"), "\n", sep = "")
 cat(file.path("output", "figures", "check_hist_count_total.png"), "\n", sep = "")
