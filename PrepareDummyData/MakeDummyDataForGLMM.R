@@ -425,7 +425,9 @@ p1 <- ggplot(qt_allsize, aes(x = factor(year), y = cpue_total, group = 1)) +
     y = "Catch efficiency"
   )
 
-print(p1)
+if (interactive()) {
+  print(p1)
+}
 
 # サイズ別
 p2 <- ggplot(year_size_cpue, aes(x = factor(year), y = cpue, color = size_class, group = size_class)) +
@@ -437,7 +439,9 @@ p2 <- ggplot(year_size_cpue, aes(x = factor(year), y = cpue, color = size_class,
     color = "Size class"
   )
 
-print(p2)
+if (interactive()) {
+  print(p2)
+}
 
 # 年月ごとのデータ数
 p3 <- ggplot(ym_counts, aes(x = ym, y = n_tow)) +
@@ -448,7 +452,9 @@ p3 <- ggplot(ym_counts, aes(x = ym, y = n_tow)) +
   ) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 
-print(p3)
+if (interactive()) {
+  print(p3)
+}
 
 # -----------------------------------------
 # 6. 検証
@@ -521,7 +527,9 @@ verify_scatter <- ggplot(year_mean_check, aes(x = cpue_target, y = mean_cpue_bac
     y = "Reconstructed mean CPUE"
   )
 
-print(verify_scatter)
+if (interactive()) {
+  print(verify_scatter)
+}
 
 verify_year_series <- year_mean_check |>
   select(year, size_class, cpue_target, mean_cpue_backcalc) |>
@@ -540,7 +548,9 @@ verify_year_series <- year_mean_check |>
     color = "Series"
   )
 
-print(verify_year_series)
+if (interactive()) {
+  print(verify_year_series)
+}
 
 verify_relative_error <- ggplot(year_mean_check, aes(x = factor(year), y = rel_error_pct)) +
   geom_hline(yintercept = 0) +
@@ -551,7 +561,9 @@ verify_relative_error <- ggplot(year_mean_check, aes(x = factor(year), y = rel_e
     y = "Relative error (%)"
   )
 
-print(verify_relative_error)
+if (interactive()) {
+  print(verify_relative_error)
+}
 
 if (all(c("depth_eff_chu", "depth_eff_dai", "depth_eff_toku", "depth_eff_tokudai") %in% names(akagai_dummy_tows))) {
   depth_effect_long <- akagai_dummy_tows |>
@@ -582,7 +594,9 @@ if (all(c("depth_eff_chu", "depth_eff_dai", "depth_eff_toku", "depth_eff_tokudai
       y = "Mean depth effect"
     )
 
-  print(verify_depth_effect)
+  if (interactive()) {
+    print(verify_depth_effect)
+  }
 
   ggsave("PrepareDummyData/data_processed/verify_depth_effect_by_year.png", verify_depth_effect, width = 10, height = 6, dpi = 150)
 }
