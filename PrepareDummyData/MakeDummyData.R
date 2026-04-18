@@ -5,6 +5,8 @@
 
 library(tidyverse)
 
+input_dir <- file.path("PrepareDummyData", "DataFromFig")
+
 # -----------------------------------------
 # 出力フォルダ
 # -----------------------------------------
@@ -26,7 +28,7 @@ read_xy_csv <- function(path, x_name = "x", y_name = "y") {
 # -----------------------------------------
 # 1. 全サイズ合計の年別漁獲効率
 # -----------------------------------------
-qt_allsize <- read_xy_csv("qt_allsize.csv", x_name = "year_raw", y_name = "cpue_total") |>
+qt_allsize <- read_xy_csv(file.path(input_dir, "qt_allsize.csv"), x_name = "year_raw", y_name = "cpue_total") |>
   mutate(
     year = round(year_raw)
   ) |>
@@ -39,28 +41,28 @@ write_csv(qt_allsize, "data_processed/year_total_cpue_extracted.csv")
 # -----------------------------------------
 # 2. サイズ別の年別漁獲効率
 # -----------------------------------------
-qt_medium <- read_xy_csv("qt_medium.csv", x_name = "year_raw", y_name = "cpue") |>
+qt_medium <- read_xy_csv(file.path(input_dir, "qt_medium.csv"), x_name = "year_raw", y_name = "cpue") |>
   mutate(
     year = round(year_raw),
     size_class = "chu"
   ) |>
   select(year, size_class, cpue)
 
-qt_dai <- read_xy_csv("qt_dai.csv", x_name = "year_raw", y_name = "cpue") |>
+qt_dai <- read_xy_csv(file.path(input_dir, "qt_dai.csv"), x_name = "year_raw", y_name = "cpue") |>
   mutate(
     year = round(year_raw),
     size_class = "dai"
   ) |>
   select(year, size_class, cpue)
 
-qt_toku <- read_xy_csv("qt_toku.csv", x_name = "year_raw", y_name = "cpue") |>
+qt_toku <- read_xy_csv(file.path(input_dir, "qt_toku.csv"), x_name = "year_raw", y_name = "cpue") |>
   mutate(
     year = round(year_raw),
     size_class = "toku"
   ) |>
   select(year, size_class, cpue)
 
-qt_tokudai <- read_xy_csv("qt_tokudai.csv", x_name = "year_raw", y_name = "cpue") |>
+qt_tokudai <- read_xy_csv(file.path(input_dir, "qt_tokudai.csv"), x_name = "year_raw", y_name = "cpue") |>
   mutate(
     year = round(year_raw),
     size_class = "tokudai"
@@ -103,7 +105,7 @@ decimal_year_to_ym <- function(x) {
   )
 }
 
-n_month_raw <- read_xy_csv("NofDatat.csv", x_name = "decimal_year", y_name = "n_tow")
+n_month_raw <- read_xy_csv(file.path(input_dir, "NofDatat.csv"), x_name = "decimal_year", y_name = "n_tow")
 
 ym_tbl <- decimal_year_to_ym(n_month_raw$decimal_year)
 
