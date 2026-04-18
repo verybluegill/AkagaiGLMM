@@ -13,6 +13,10 @@ optional_pkgs <- load_project_packages(
 
 ensure_project_dirs()
 
+get_observed_factor_levels <- function(x) {
+  sort(unique(as.character(x[!is.na(x)])))
+}
+
 compute_year_index_table <- function(model_obj, data_obj, optional_pkgs, depth_glmm_sc_value = NULL) {
   if (isTRUE(optional_pkgs[["emmeans"]])) {
     at_list <- list(effort_glmm = 1)
@@ -31,11 +35,17 @@ compute_year_index_table <- function(model_obj, data_obj, optional_pkgs, depth_g
     return(as.data.frame(out))
   }
 
+  year_levels_used <- get_observed_factor_levels(data_obj$year)
+  month_levels_used <- get_observed_factor_levels(data_obj$month)
+  area_levels_used <- get_observed_factor_levels(data_obj$area)
+  vessel_levels_used <- get_observed_factor_levels(data_obj$vessel)
+
+  # depth subset で実際に使われた level を使わないと predict() が落ちることがある
   pred_grid <- expand_grid(
-    year = factor(levels(data_obj$year), levels = levels(data_obj$year)),
-    month = factor(levels(data_obj$month), levels = levels(data_obj$month)),
-    area = factor(levels(data_obj$area)[1], levels = levels(data_obj$area)),
-    vessel = factor(levels(data_obj$vessel)[1], levels = levels(data_obj$vessel)),
+    year = factor(year_levels_used, levels = year_levels_used),
+    month = factor(month_levels_used, levels = month_levels_used),
+    area = factor(area_levels_used[[1]], levels = area_levels_used),
+    vessel = factor(vessel_levels_used[[1]], levels = vessel_levels_used),
     effort_glmm = 1
   )
 
@@ -522,17 +532,21 @@ depth_seq <- seq(
   length.out = 100
 )
 
-year_ref <- levels(glmm_dat_depth$year)[1]
+year_levels_used <- get_observed_factor_levels(glmm_dat_depth$year)
+month_levels_used <- get_observed_factor_levels(glmm_dat_depth$month)
+area_levels_used <- get_observed_factor_levels(glmm_dat_depth$area)
+vessel_levels_used <- get_observed_factor_levels(glmm_dat_depth$vessel)
+year_ref <- year_levels_used[[1]]
 depth_plot_grid <- expand_grid(
-  year = factor(year_ref, levels = levels(glmm_dat_depth$year)),
-  month = factor(levels(glmm_dat_depth$month), levels = levels(glmm_dat_depth$month)),
+  year = factor(year_ref, levels = year_levels_used),
+  month = factor(month_levels_used, levels = month_levels_used),
   depth_glmm = depth_seq
 ) |>
   mutate(
     depth_glmm_sc = (depth_glmm - depth_glmm_mean) / depth_glmm_sd,
     effort_glmm = 1,
-    area = factor(levels(glmm_dat_depth$area)[1], levels = levels(glmm_dat_depth$area)),
-    vessel = factor(levels(glmm_dat_depth$vessel)[1], levels = levels(glmm_dat_depth$vessel))
+    area = factor(area_levels_used[[1]], levels = area_levels_used),
+    vessel = factor(vessel_levels_used[[1]], levels = vessel_levels_used)
   )
 
 # depth 効果図は基準 year と reference month を固定した補助図
@@ -567,15 +581,15 @@ ggsave(
 )
 
 depth_plot_grid_average_year <- expand_grid(
-  year = factor(levels(glmm_dat_depth$year), levels = levels(glmm_dat_depth$year)),
-  month = factor(levels(glmm_dat_depth$month), levels = levels(glmm_dat_depth$month)),
+  year = factor(year_levels_used, levels = year_levels_used),
+  month = factor(month_levels_used, levels = month_levels_used),
   depth_glmm = depth_seq
 ) |>
   mutate(
     depth_glmm_sc = (depth_glmm - depth_glmm_mean) / depth_glmm_sd,
     effort_glmm = 1,
-    area = factor(levels(glmm_dat_depth$area)[1], levels = levels(glmm_dat_depth$area)),
-    vessel = factor(levels(glmm_dat_depth$vessel)[1], levels = levels(glmm_dat_depth$vessel))
+    area = factor(area_levels_used[[1]], levels = area_levels_used),
+    vessel = factor(vessel_levels_used[[1]], levels = vessel_levels_used)
   )
 
 depth_plot_grid_average_year$predicted_count <- predict(
