@@ -25,6 +25,7 @@ packrat/src/
 *.exe
 # Large outputs / results
 *.rds
+*.csv
 *.RDS
 *.pdf
 *.png
@@ -37,6 +38,7 @@ frames_CPUE/
 frames_SST/
 rsconnect/
 # Logs and temporary files
+*.txt
 *.log
 *.tmp
 *.bak
