@@ -1,0 +1,45 @@
+# RStudio and session files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+# Python cache directories/files
+/__pycache__/
+**/__pycache__/
+*.py[cod]
+# IDE/project files
+.DS_Store
+Thumbs.db
+# Dependencies and caches
+renv/library/
+renv/staging/
+packrat/lib*/
+packrat/src/
+.Rprofile
+# Compiled objects
+*.o
+*.so
+*.dll
+*.a
+*.lib
+*.exe
+# Large outputs / results
+*.rds
+*.RDS
+*.pdf
+*.png
+*.gif
+*.pyc
+*.nc
+frames_B/
+frames_C/
+frames_CPUE/
+frames_SST/
+rsconnect/
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+saury-mm
+AGENTS.md
