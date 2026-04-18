@@ -150,6 +150,56 @@ tokudai_count_scale <- 126
 ware_count_scale <- 30
 sho_count_scale <- 18
 shosho_count_scale <- 11.3
+sigma_area_common <- 0.24
+sigma_area_dev <- 0.07
+sigma_vessel_common <- 0.14
+sigma_vessel_dev <- 0.05
+nb_size_chu <- 6
+nb_size_dai <- 6
+nb_size_toku <- 6
+nb_size_tokudai <- 5
+nb_size_sho <- 5
+nb_size_shosho <- 5
+nb_size_ware <- 5
+
+month_eff_tbl <- tibble(
+  month = 1:12,
+  month_eff_common = c(0.03, 0.05, 0.02, 0.00, -0.02, -0.03, -0.02, 0.01, 0.04, 0.06, 0.03, 0.01),
+  month_eff_chu = month_eff_common + c(0.01, 0.01, 0.00, 0.00, -0.01, -0.02, -0.01, 0.00, 0.01, 0.02, 0.01, 0.00),
+  month_eff_dai = month_eff_common + c(0.00, 0.01, 0.01, 0.00, 0.00, -0.01, -0.01, 0.00, 0.01, 0.01, 0.00, 0.00),
+  month_eff_toku = month_eff_common + c(-0.01, 0.00, 0.01, 0.01, 0.00, 0.00, -0.01, -0.01, 0.00, 0.01, 0.01, 0.00),
+  month_eff_tokudai = month_eff_common + c(-0.01, -0.01, 0.00, 0.01, 0.01, 0.01, 0.00, -0.01, 0.00, 0.00, 0.01, 0.01),
+  month_eff_sho = month_eff_common * 0.75 + c(0.02, 0.01, 0.01, 0.00, -0.01, -0.01, -0.01, 0.00, 0.02, 0.02, 0.01, 0.00),
+  month_eff_shosho = month_eff_common * 0.65 + c(0.02, 0.02, 0.01, 0.00, 0.00, -0.01, -0.01, 0.00, 0.01, 0.02, 0.01, 0.00),
+  month_eff_ware = month_eff_common * 0.70 + c(0.00, 0.01, 0.01, 0.00, -0.01, -0.01, -0.01, 0.00, 0.01, 0.01, 0.01, 0.00)
+) |>
+  select(-month_eff_common)
+
+area_re_tbl <- tibble(
+  area = area_candidates,
+  area_re_common = rnorm(length(area_candidates), mean = 0, sd = sigma_area_common),
+  area_re_chu = area_re_common + rnorm(length(area_candidates), mean = 0, sd = sigma_area_dev),
+  area_re_dai = area_re_common + rnorm(length(area_candidates), mean = 0, sd = sigma_area_dev),
+  area_re_toku = area_re_common + rnorm(length(area_candidates), mean = 0, sd = sigma_area_dev),
+  area_re_tokudai = area_re_common + rnorm(length(area_candidates), mean = 0, sd = sigma_area_dev),
+  area_re_sho = area_re_common * 0.8 + rnorm(length(area_candidates), mean = 0, sd = sigma_area_dev * 0.8),
+  area_re_shosho = area_re_common * 0.7 + rnorm(length(area_candidates), mean = 0, sd = sigma_area_dev * 0.8),
+  area_re_ware = area_re_common * 0.75 + rnorm(length(area_candidates), mean = 0, sd = sigma_area_dev * 0.8)
+) |>
+  select(-area_re_common)
+
+vessel_re_tbl <- tibble(
+  vessel = vessel_candidates,
+  vessel_re_common = rnorm(length(vessel_candidates), mean = 0, sd = sigma_vessel_common),
+  vessel_re_chu = vessel_re_common + rnorm(length(vessel_candidates), mean = 0, sd = sigma_vessel_dev),
+  vessel_re_dai = vessel_re_common + rnorm(length(vessel_candidates), mean = 0, sd = sigma_vessel_dev),
+  vessel_re_toku = vessel_re_common + rnorm(length(vessel_candidates), mean = 0, sd = sigma_vessel_dev),
+  vessel_re_tokudai = vessel_re_common + rnorm(length(vessel_candidates), mean = 0, sd = sigma_vessel_dev),
+  vessel_re_sho = vessel_re_common * 0.8 + rnorm(length(vessel_candidates), mean = 0, sd = sigma_vessel_dev * 0.8),
+  vessel_re_shosho = vessel_re_common * 0.7 + rnorm(length(vessel_candidates), mean = 0, sd = sigma_vessel_dev * 0.8),
+  vessel_re_ware = vessel_re_common * 0.75 + rnorm(length(vessel_candidates), mean = 0, sd = sigma_vessel_dev * 0.8)
+) |>
+  select(-vessel_re_common)
 
 akagai_dummy_tows <- ym_counts |>
   mutate(ym = as.character(ym)) |>
@@ -191,11 +241,19 @@ akagai_dummy_tows <- ym_counts |>
       pivot_wider(names_from = size_class, values_from = cpue),
     by = "year"
   ) |>
+  left_join(month_eff_tbl, by = "month") |>
+  left_join(area_re_tbl, by = "area") |>
+  left_join(vessel_re_tbl, by = "vessel") |>
   mutate(
-    chu_base = chu * chu_count_scale,
-    dai_base = dai * dai_count_scale,
-    toku_base = toku * toku_count_scale,
-    tokudai_base = tokudai * tokudai_count_scale,
+    base_mean_chu = chu * chu_count_scale,
+    base_mean_dai = dai * dai_count_scale,
+    base_mean_toku = toku * toku_count_scale,
+    base_mean_tokudai = tokudai * tokudai_count_scale,
+    base_mean_sho = (base_mean_chu * 0.45 + 1.2) * sho_count_scale / chu_count_scale,
+    base_mean_shosho = (base_mean_chu * 0.25 + 0.8) * shosho_count_scale / chu_count_scale,
+    base_mean_ware = base_mean_dai * 0.06 + base_mean_toku * 0.04,
+    # effort は曳網時間に相当する量として duration_min を利用する
+    effort_raw = pmax(duration_min, 1e-6),
     # 水深効果は負値を避けるため下限を設け、年平均を壊しにくいよう平均1に正規化する
     depth_eff_chu_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "chu"] + depth_line_tbl$b[depth_line_tbl$size_class == "chu"] * depth_mid),
     depth_eff_dai_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "dai"] + depth_line_tbl$b[depth_line_tbl$size_class == "dai"] * depth_mid),
@@ -204,6 +262,8 @@ akagai_dummy_tows <- ym_counts |>
   ) |>
   group_by(year) |>
   mutate(
+    # GLMM の offset(log(effort)) に対応させるため、平均1に正規化する
+    effort = effort_raw / mean(effort_raw, na.rm = TRUE),
     depth_eff_chu = depth_eff_chu_raw / mean(depth_eff_chu_raw, na.rm = TRUE),
     depth_eff_dai = depth_eff_dai_raw / mean(depth_eff_dai_raw, na.rm = TRUE),
     depth_eff_toku = depth_eff_toku_raw / mean(depth_eff_toku_raw, na.rm = TRUE),
@@ -211,13 +271,47 @@ akagai_dummy_tows <- ym_counts |>
   ) |>
   ungroup() |>
   mutate(
-    chu = rpois(n(), lambda = pmax(chu_base * depth_eff_chu, 0.1)),
-    dai = rpois(n(), lambda = pmax(dai_base * depth_eff_dai, 0.1)),
-    toku = rpois(n(), lambda = pmax(toku_base * depth_eff_toku, 0.1)),
-    tokudai = rpois(n(), lambda = pmax(tokudai_base * depth_eff_tokudai, 0.1)),
-    ware = rpois(n(), lambda = pmax((dai * 0.06 + toku * 0.04), 0.1)),
-    sho = rpois(n(), lambda = pmax((chu_base * 0.45 + 1.2) * sho_count_scale / chu_count_scale, 0.1)),
-    shosho = rpois(n(), lambda = pmax((chu_base * 0.25 + 0.8) * shosho_count_scale / chu_count_scale, 0.1)),
+    effort = pmax(effort, 1e-8),
+    log_effort = log(pmax(effort, 1e-8)),
+    depth_eff_sho = pmax(eps, 1 + 0.85 * (depth_eff_chu - 1)),
+    depth_eff_shosho = pmax(eps, 1 + 0.75 * (depth_eff_chu - 1)),
+    depth_eff_ware = pmax(eps, 1 + 0.90 * ((0.6 * depth_eff_dai + 0.4 * depth_eff_toku) - 1)),
+    log_base_chu = log(pmax(base_mean_chu, 1e-8)),
+    log_base_dai = log(pmax(base_mean_dai, 1e-8)),
+    log_base_toku = log(pmax(base_mean_toku, 1e-8)),
+    log_base_tokudai = log(pmax(base_mean_tokudai, 1e-8)),
+    log_base_sho = log(pmax(base_mean_sho, 1e-8)),
+    log_base_shosho = log(pmax(base_mean_shosho, 1e-8)),
+    log_base_ware = log(pmax(base_mean_ware, 1e-8)),
+    log_depth_eff_chu = log(pmax(depth_eff_chu, 1e-8)),
+    log_depth_eff_dai = log(pmax(depth_eff_dai, 1e-8)),
+    log_depth_eff_toku = log(pmax(depth_eff_toku, 1e-8)),
+    log_depth_eff_tokudai = log(pmax(depth_eff_tokudai, 1e-8)),
+    log_depth_eff_sho = log(pmax(depth_eff_sho, 1e-8)),
+    log_depth_eff_shosho = log(pmax(depth_eff_shosho, 1e-8)),
+    log_depth_eff_ware = log(pmax(depth_eff_ware, 1e-8)),
+    eta_chu = log_base_chu + month_eff_chu + area_re_chu + vessel_re_chu + log_depth_eff_chu + log_effort,
+    eta_dai = log_base_dai + month_eff_dai + area_re_dai + vessel_re_dai + log_depth_eff_dai + log_effort,
+    eta_toku = log_base_toku + month_eff_toku + area_re_toku + vessel_re_toku + log_depth_eff_toku + log_effort,
+    eta_tokudai = log_base_tokudai + month_eff_tokudai + area_re_tokudai + vessel_re_tokudai + log_depth_eff_tokudai + log_effort,
+    eta_sho = log_base_sho + month_eff_sho + area_re_sho + vessel_re_sho + log_depth_eff_sho + log_effort,
+    eta_shosho = log_base_shosho + month_eff_shosho + area_re_shosho + vessel_re_shosho + log_depth_eff_shosho + log_effort,
+    eta_ware = log_base_ware + month_eff_ware + area_re_ware + vessel_re_ware + log_depth_eff_ware + log_effort,
+    mu_chu = exp(eta_chu),
+    mu_dai = exp(eta_dai),
+    mu_toku = exp(eta_toku),
+    mu_tokudai = exp(eta_tokudai),
+    mu_sho = exp(eta_sho),
+    mu_shosho = exp(eta_shosho),
+    mu_ware = exp(eta_ware),
+    chu = rnbinom(n(), mu = pmax(mu_chu, 1e-8), size = nb_size_chu),
+    dai = rnbinom(n(), mu = pmax(mu_dai, 1e-8), size = nb_size_dai),
+    toku = rnbinom(n(), mu = pmax(mu_toku, 1e-8), size = nb_size_toku),
+    tokudai = rnbinom(n(), mu = pmax(mu_tokudai, 1e-8), size = nb_size_tokudai),
+    sho = rnbinom(n(), mu = pmax(mu_sho, 1e-8), size = nb_size_sho),
+    shosho = rnbinom(n(), mu = pmax(mu_shosho, 1e-8), size = nb_size_shosho),
+    ware = rnbinom(n(), mu = pmax(mu_ware, 1e-8), size = nb_size_ware),
+    # count_total は total GLMM の応答として使う全サイズ合計で、ware を含める
     count_total = chu + dai + toku + tokudai + ware + sho + shosho,
     shipCode = vessel_code_tbl$shipCode[match(vessel, vessel_code_tbl$vessel)],
     year_reiwa = year - 2018L,
@@ -235,9 +329,10 @@ akagai_dummy_tows <- ym_counts |>
     x
   })() |>
   select(
-    shipCode, year_reiwa, month, day, area, tow_round,
+    date, year, month, vessel, area, shipCode, year_reiwa, day, duration_min, effort,
+    tow_round,
     start_time, end_time, duration_time, speed_knot, area_start, area_end,
-    depth_min, depth_max, depth_eff_chu, depth_eff_dai, depth_eff_toku, depth_eff_tokudai,
+    depth_mid, depth_min, depth_max, depth_eff_chu, depth_eff_dai, depth_eff_toku, depth_eff_tokudai, depth_eff_sho, depth_eff_shosho, depth_eff_ware,
     count_total, chu, dai, toku, tokudai, ware, sho, shosho
   )
 
@@ -246,6 +341,76 @@ write_csv(akagai_dummy_tows, "PrepareDummyData/data_processed/akagai_dummy_tows.
 print(head(akagai_dummy_tows))
 str(akagai_dummy_tows)
 print(summary(akagai_dummy_tows))
+
+cat("\n=== GLMM quick check: n rows ===\n")
+cat(nrow(akagai_dummy_tows), "\n")
+
+cat("\n=== GLMM quick check: rows by year ===\n")
+akagai_dummy_tows |>
+  count(year) |>
+  print(n = Inf)
+
+cat("\n=== GLMM quick check: rows by vessel ===\n")
+akagai_dummy_tows |>
+  count(vessel) |>
+  print(n = Inf)
+
+cat("\n=== GLMM quick check: rows by area ===\n")
+akagai_dummy_tows |>
+  count(area) |>
+  print(n = Inf)
+
+cat("\n=== GLMM quick check: mean(count_total) by year ===\n")
+akagai_dummy_tows |>
+  group_by(year) |>
+  summarise(mean_count_total = mean(count_total, na.rm = TRUE), .groups = "drop") |>
+  print(n = Inf)
+
+cat("\n=== GLMM quick check: mean(count_total) by year-month ===\n")
+akagai_dummy_tows |>
+  group_by(year, month) |>
+  summarise(mean_count_total = mean(count_total, na.rm = TRUE), .groups = "drop") |>
+  print(n = Inf)
+
+cat("\n=== GLMM quick check: mean(count_total) by area ===\n")
+akagai_dummy_tows |>
+  group_by(area) |>
+  summarise(mean_count_total = mean(count_total, na.rm = TRUE), .groups = "drop") |>
+  print(n = Inf)
+
+cat("\n=== GLMM quick check: mean(count_total) by vessel ===\n")
+akagai_dummy_tows |>
+  group_by(vessel) |>
+  summarise(mean_count_total = mean(count_total, na.rm = TRUE), .groups = "drop") |>
+  print(n = Inf)
+
+cat("\n=== GLMM quick check: var/mean and zero proportion of count_total ===\n")
+akagai_dummy_tows |>
+  summarise(
+    mean_count_total = mean(count_total, na.rm = TRUE),
+    var_count_total = var(count_total, na.rm = TRUE),
+    var_over_mean = var_count_total / pmax(mean_count_total, 1e-8),
+    zero_prop_count_total = mean(count_total == 0, na.rm = TRUE)
+  ) |>
+  print()
+
+cat("\n=== GLMM quick check: mean counts by year and size ===\n")
+akagai_dummy_tows |>
+  group_by(year) |>
+  summarise(
+    mean_chu = mean(chu, na.rm = TRUE),
+    mean_dai = mean(dai, na.rm = TRUE),
+    mean_toku = mean(toku, na.rm = TRUE),
+    mean_tokudai = mean(tokudai, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  print(n = Inf)
+
+cat("\n=== GLMM quick check: area random effect summary ===\n")
+print(summary(area_re_tbl))
+
+cat("\n=== GLMM quick check: vessel random effect summary ===\n")
+print(summary(vessel_re_tbl))
 
 # -----------------------------------------
 # 5. 確認用プロット
