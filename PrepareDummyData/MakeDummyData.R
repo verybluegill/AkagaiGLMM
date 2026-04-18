@@ -1,6 +1,7 @@
 # =========================================
 # 01_make_extracted_data.R
 # 図から抽出したCSVを、解析しやすい形に整形する
+# 修正版：NofDatat.csv の日付割当を修正
 # =========================================
 
 library(tidyverse)
@@ -83,55 +84,47 @@ write_csv(year_size_cpue, "data_processed/year_size_cpue_extracted.csv")
 
 # -----------------------------------------
 # 3. 年月ごとのデータ数
-# NofDatat.csv の x は decimal year なので Year-Month に直す
-# 例:
-#   2022.75 なら 2022年10月ごろ
+# 修正版：
+# NofDatat.csv の x は実年月ではなく、棒の並び順として扱う
+# 青グラフの正しい年月順を手で与えて対応づける
 # -----------------------------------------
-decimal_year_to_ym <- function(x) {
-  yr <- floor(x)
-  frac <- x - yr
-  
-  # 0-11の月番号に変換してから +1
-  mon <- floor(frac * 12) + 1
-  
-  # 念のため範囲補正
-  mon[mon < 1] <- 1
-  mon[mon > 12] <- 12
-  
-  tibble(
-    year = yr,
-    month = mon,
-    ym = sprintf("%04d-%02d", yr, mon)
+n_month_raw <- read_xy_csv(file.path(input_dir, "NofDatat.csv"), x_name = "x_raw", y_name = "n_tow")
+
+# 青グラフの正しい年月順
+ym_order <- c(
+  "2020-09","2020-10","2020-11","2020-12",
+  "2021-01","2021-03","2021-04","2021-05",
+  "2021-09","2021-10","2021-11","2021-12",
+  "2022-01","2022-02","2022-03","2022-04","2022-05",
+  "2022-08","2022-09","2022-10","2022-11","2022-12",
+  "2023-01","2023-02","2023-03","2023-04","2023-05","2023-06",
+  "2023-09","2023-10","2023-11","2023-12",
+  "2024-01","2024-02","2024-03","2024-04","2024-05","2024-06"
+)
+
+if (nrow(n_month_raw) != length(ym_order)) {
+  stop(
+    "Row mismatch: NofDatat.csv has ", nrow(n_month_raw),
+    " rows, but ym_order has ", length(ym_order), " labels."
   )
 }
 
-n_month_raw <- read_xy_csv(file.path(input_dir, "NofDatat.csv"), x_name = "decimal_year", y_name = "n_tow")
-
-ym_tbl <- decimal_year_to_ym(n_month_raw$decimal_year)
-
-ym_counts <- bind_cols(ym_tbl, n_month_raw |> select(n_tow)) |>
-  group_by(year, month, ym) |>
-  summarise(
-    n_tow = mean(n_tow, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  arrange(year, month)
+ym_counts <- tibble(
+  ym = ym_order,
+  n_tow = n_month_raw$n_tow
+) |>
+  mutate(
+    year = as.integer(substr(ym, 1, 4)),
+    month = as.integer(substr(ym, 6, 7)),
+    ym = factor(ym, levels = ym_order)
+  )
 
 print(ym_counts, n = nrow(ym_counts))
 
-write_csv(ym_counts, "data_processed/ym_counts_extracted.csv")
-
-# -----------------------------------------
-# 4. 解析用の最低限オブジェクトをまとめる
-# 後続の解析Rで読みやすくする
-# -----------------------------------------
-saveRDS(
-  list(
-    year_total_cpue = qt_allsize,
-    year_size_cpue = year_size_cpue,
-    ym_counts = ym_counts
-  ),
-  file = "data_processed/extracted_figure_data.rds"
+write_csv(
+  ym_counts |>
+    mutate(ym = as.character(ym)),
+  "data_processed/ym_counts_extracted.csv"
 )
 
 # -----------------------------------------
