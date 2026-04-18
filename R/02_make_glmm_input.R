@@ -484,6 +484,103 @@ print(tibble(
   var_over_mean = stats::var(glmm_input$count_total) / mean(glmm_input$count_total)
 ))
 
+check_area_missing_path <- file.path("output", "tables", "check_area_missing_rows.csv")
+check_non_integer_count_path <- file.path("output", "tables", "check_non_integer_count_rows.csv")
+check_year_out_of_range_path <- file.path("output", "tables", "check_year_out_of_range_rows.csv")
+count_check_cols <- c("chu", "dai", "toku", "tokudai", "ware", "sho", "shosho", "count_total")
+
+glmm_input_check <- glmm_input |>
+  mutate(
+    flag_area_missing = is.na(area) | area == ""
+  )
+
+non_integer_matrix <- sapply(
+  count_check_cols,
+  function(col_name) {
+    abs(glmm_input_check[[col_name]] - round(glmm_input_check[[col_name]])) > 1e-8
+  }
+)
+
+if (is.null(dim(non_integer_matrix))) {
+  non_integer_matrix <- matrix(non_integer_matrix, ncol = length(count_check_cols))
+  colnames(non_integer_matrix) <- count_check_cols
+}
+
+non_integer_matrix[is.na(non_integer_matrix)] <- FALSE
+
+glmm_input_check <- glmm_input_check |>
+  mutate(
+    flag_non_integer_count = apply(non_integer_matrix, 1, any),
+    non_integer_cols = apply(
+      non_integer_matrix,
+      1,
+      function(x) paste(count_check_cols[x], collapse = ",")
+    ),
+    flag_year_out_of_range = !(year %in% 2020:2024)
+  )
+
+area_missing_rows <- glmm_input_check |>
+  filter(flag_area_missing) |>
+  select(any_of(c(
+    "tow_id", "date", "year", "month", "day", "vessel", "shipCode",
+    "area", "original_area", "duration_min", "effort", "count_total"
+  )))
+
+cat("\n=== area missing check ===\n")
+cat("n_area_missing = ", nrow(area_missing_rows), "\n", sep = "")
+
+if (nrow(area_missing_rows) > 0) {
+  print(head(area_missing_rows, 10))
+}
+
+write_csv(area_missing_rows, check_area_missing_path)
+
+non_integer_count_rows <- glmm_input_check |>
+  filter(flag_non_integer_count) |>
+  select(any_of(c(
+    "tow_id", "date", "year", "month", "vessel", "area", "count_total",
+    "chu", "dai", "toku", "tokudai", "ware", "sho", "shosho", "non_integer_cols"
+  )))
+
+cat("\n=== non-integer count check ===\n")
+cat("n_non_integer_count = ", nrow(non_integer_count_rows), "\n", sep = "")
+
+if (nrow(non_integer_count_rows) > 0) {
+  warning("non-integer count rows detected")
+  print(head(non_integer_count_rows, 10))
+}
+
+write_csv(non_integer_count_rows, check_non_integer_count_path)
+
+year_out_of_range_rows <- glmm_input_check |>
+  filter(flag_year_out_of_range) |>
+  select(any_of(c(
+    "tow_id", "date", "year", "year_reiwa", "month", "day", "vessel", "shipCode", "area", "count_total"
+  )))
+
+cat("\n=== year out-of-range check ===\n")
+cat("n_year_out_of_range = ", nrow(year_out_of_range_rows), "\n", sep = "")
+
+if (nrow(year_out_of_range_rows) > 0) {
+  cat("Years outside expected range 2020:2024 detected\n")
+  print(year_out_of_range_rows |>
+    count(year, name = "n_row") |>
+    arrange(year), n = nrow(year_out_of_range_rows |>
+      count(year, name = "n_row") |>
+      arrange(year)))
+  print(head(year_out_of_range_rows, 10))
+}
+
+write_csv(year_out_of_range_rows, check_year_out_of_range_path)
+
+cat("\n=== data quality flags summary ===\n")
+print(tibble(
+  area_missing_rate = mean(glmm_input_check$flag_area_missing),
+  non_integer_count_rate = mean(glmm_input_check$flag_non_integer_count),
+  year_out_of_range_rate = mean(glmm_input_check$flag_year_out_of_range),
+  n_no_problem_rows = sum(!(glmm_input_check$flag_area_missing | glmm_input_check$flag_non_integer_count | glmm_input_check$flag_year_out_of_range))
+))
+
 # -----------------------------------------
 # check: 簡単な図の保存
 # -----------------------------------------
@@ -526,5 +623,8 @@ cat(output_path, "\n", sep = "")
 cat(file.path("output", "tables", "check_n_year_month.csv"), "\n", sep = "")
 cat(file.path("output", "tables", "check_n_year_area.csv"), "\n", sep = "")
 cat(file.path("output", "tables", "check_n_year_vessel.csv"), "\n", sep = "")
+cat(check_area_missing_path, "\n", sep = "")
+cat(check_non_integer_count_path, "\n", sep = "")
+cat(check_year_out_of_range_path, "\n", sep = "")
 cat(file.path("output", "figures", "check_effort_year_month.png"), "\n", sep = "")
 cat(file.path("output", "figures", "check_hist_count_total.png"), "\n", sep = "")
