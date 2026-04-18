@@ -154,6 +154,13 @@ depth_line_tbl <- tibble(
   )
 
 eps <- 0.02
+chu_count_scale <- 150
+dai_count_scale <- 150
+toku_count_scale <- 126
+tokudai_count_scale <- 126
+ware_count_scale <- 30
+sho_count_scale <- 18
+shosho_count_scale <- 11.3
 
 akagai_dummy_tows <- ym_counts |>
   mutate(ym = as.character(ym)) |>
@@ -177,7 +184,7 @@ akagai_dummy_tows <- ym_counts |>
       ym = ym_i,
       vessel = sample(vessel_candidates, size = n_tow_i, replace = TRUE),
       date = sprintf("%04d-%02d-%02d", year_i, month_i, day_i),
-      tow_no = seq_len(n_tow_i),
+      tow_round = sample(c(1L, 2L, 3L), size = n_tow_i, replace = TRUE, prob = c(0.62, 0.29, 0.09)),
       start_time = sprintf("%02d:%02d", start_minute_i %/% 60, start_minute_i %% 60),
       end_time = sprintf("%02d:%02d", end_minute_i %/% 60, end_minute_i %% 60),
       area = sample(area_candidates, size = n_tow_i, replace = TRUE),
@@ -197,10 +204,10 @@ akagai_dummy_tows <- ym_counts |>
     by = "year"
   ) |>
   mutate(
-    chu_base = chu,
-    dai_base = dai,
-    toku_base = toku,
-    tokudai_base = tokudai,
+    chu_base = chu * chu_count_scale,
+    dai_base = dai * dai_count_scale,
+    toku_base = toku * toku_count_scale,
+    tokudai_base = tokudai * tokudai_count_scale,
     # 水深効果は負値を避けるため下限を設け、年平均を壊しにくいよう平均1に正規化する
     depth_eff_chu_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "chu"] + depth_line_tbl$b[depth_line_tbl$size_class == "chu"] * depth_mid),
     depth_eff_dai_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "dai"] + depth_line_tbl$b[depth_line_tbl$size_class == "dai"] * depth_mid),
@@ -214,14 +221,13 @@ akagai_dummy_tows <- ym_counts |>
     dai = rpois(n(), lambda = pmax(dai_base * dai_mult * depth_eff_dai, 0.1)),
     toku = rpois(n(), lambda = pmax(toku_base * toku_mult * depth_eff_toku, 0.1)),
     tokudai = rpois(n(), lambda = pmax(tokudai_base * tokudai_mult * depth_eff_tokudai, 0.1)),
-    ware = rpois(n(), lambda = pmax((dai_base * 0.18 + toku_base * 0.12) * ware_mult, 0.1)),
-    sho = rpois(n(), lambda = pmax((chu_base * 0.45 + 1.2) * sho_mult, 0.1)),
-    shosho = rpois(n(), lambda = pmax((chu_base * 0.25 + 0.8) * shosho_mult, 0.1)),
+    ware = rpois(n(), lambda = pmax((dai * 0.06 + toku * 0.04) * ware_mult, 0.1)),
+    sho = rpois(n(), lambda = pmax((chu_base * 0.45 + 1.2) * sho_mult * sho_count_scale / chu_count_scale, 0.1)),
+    shosho = rpois(n(), lambda = pmax((chu_base * 0.25 + 0.8) * shosho_mult * shosho_count_scale / chu_count_scale, 0.1)),
     count_total = chu + dai + toku + tokudai + ware + sho + shosho,
     shipCode = vessel_code_tbl$shipCode[match(vessel, vessel_code_tbl$vessel)],
     year_reiwa = year - 2018L,
     day = as.integer(substr(date, 9, 10)),
-    operation_type = 1L,
     duration_time = sprintf("%02d:%02d", duration_min %/% 60, duration_min %% 60),
     area_start = area,
     area_end = area
@@ -235,7 +241,7 @@ akagai_dummy_tows <- ym_counts |>
     x
   })() |>
   select(
-    shipCode, year_reiwa, month, day, area, operation_type,
+    shipCode, year_reiwa, month, day, area, tow_round,
     start_time, end_time, duration_time, speed_knot, area_start, area_end,
     depth_min, depth_max, count_total, chu, dai, toku, tokudai, ware, sho, shosho
   )
