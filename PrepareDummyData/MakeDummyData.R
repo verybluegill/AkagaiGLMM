@@ -200,11 +200,17 @@ akagai_dummy_tows <- ym_counts |>
     depth_eff_chu_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "chu"] + depth_line_tbl$b[depth_line_tbl$size_class == "chu"] * depth_mid),
     depth_eff_dai_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "dai"] + depth_line_tbl$b[depth_line_tbl$size_class == "dai"] * depth_mid),
     depth_eff_toku_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "toku"] + depth_line_tbl$b[depth_line_tbl$size_class == "toku"] * depth_mid),
-    depth_eff_tokudai_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "tokudai"] + depth_line_tbl$b[depth_line_tbl$size_class == "tokudai"] * depth_mid),
+    depth_eff_tokudai_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "tokudai"] + depth_line_tbl$b[depth_line_tbl$size_class == "tokudai"] * depth_mid)
+  ) |>
+  group_by(year) |>
+  mutate(
     depth_eff_chu = depth_eff_chu_raw / mean(depth_eff_chu_raw, na.rm = TRUE),
     depth_eff_dai = depth_eff_dai_raw / mean(depth_eff_dai_raw, na.rm = TRUE),
     depth_eff_toku = depth_eff_toku_raw / mean(depth_eff_toku_raw, na.rm = TRUE),
-    depth_eff_tokudai = depth_eff_tokudai_raw / mean(depth_eff_tokudai_raw, na.rm = TRUE),
+    depth_eff_tokudai = depth_eff_tokudai_raw / mean(depth_eff_tokudai_raw, na.rm = TRUE)
+  ) |>
+  ungroup() |>
+  mutate(
     chu = rpois(n(), lambda = pmax(chu_base * depth_eff_chu, 0.1)),
     dai = rpois(n(), lambda = pmax(dai_base * depth_eff_dai, 0.1)),
     toku = rpois(n(), lambda = pmax(toku_base * depth_eff_toku, 0.1)),
@@ -231,7 +237,8 @@ akagai_dummy_tows <- ym_counts |>
   select(
     shipCode, year_reiwa, month, day, area, tow_round,
     start_time, end_time, duration_time, speed_knot, area_start, area_end,
-    depth_min, depth_max, count_total, chu, dai, toku, tokudai, ware, sho, shosho
+    depth_min, depth_max, depth_eff_chu, depth_eff_dai, depth_eff_toku, depth_eff_tokudai,
+    count_total, chu, dai, toku, tokudai, ware, sho, shosho
   )
 
 write_csv(akagai_dummy_tows, "PrepareDummyData/data_processed/akagai_dummy_tows.csv")
