@@ -497,8 +497,10 @@ for (sv in size_vars) {
             max(glmm_dat_i$depth_glmm_sc, na.rm = TRUE),
             length.out = 200
           )
-        ) |>
-          mutate(predicted = predict(best_model_obj, newdata = ., type = "response", re.form = NA))
+        )
+
+        depth_plot_dat <- depth_plot_dat |>
+          mutate(predicted = predict(best_model_obj, newdata = depth_plot_dat, type = "response", re.form = NA))
 
         ref_pred <- predict(
           best_model_obj,

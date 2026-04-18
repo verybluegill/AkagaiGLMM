@@ -412,7 +412,7 @@ glmm_input <- raw_input |>
     flag_depth_missing = is.na(depth_flag_base),
     flag_depth_out_of_range = !is.na(depth_flag_base) & (depth_flag_base < depth_min_glmm | depth_flag_base > depth_max_glmm),
     flag_depth_bad = flag_depth_missing | flag_depth_out_of_range,
-    depth_glmm = if_else(flag_depth_bad, NA_real_, as.numeric(depth_raw)),
+    depth_glmm = if_else(flag_depth_bad, NA_real_, as.numeric(depth_flag_base)),
     duration_min_raw = duration_min,
     flag_duration_missing = is.na(duration_min_raw),
     flag_duration_out_of_range = !is.na(duration_min_raw) & (duration_min_raw < duration_min_min_glmm | duration_min_raw > duration_min_max_glmm),
@@ -573,7 +573,8 @@ glmm_input_check <- glmm_input_check |>
     ),
     flag_year_out_of_range = !(year %in% 2020:2024),
     flag_effort_glmm_bad = is.na(effort_glmm) | !is.finite(effort_glmm) | effort_glmm <= 0,
-    flag_use_for_main_glmm = !flag_year_out_of_range &
+    flag_use_for_main_glmm = !flag_non_integer_count &
+      !flag_year_out_of_range &
       !flag_area_missing &
       !flag_effort_glmm_bad
   )
