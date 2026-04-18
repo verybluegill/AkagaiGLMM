@@ -11,7 +11,7 @@ input_dir <- file.path("PrepareDummyData", "DataFromFig")
 # -----------------------------------------
 # 出力フォルダ
 # -----------------------------------------
-dir.create("data_processed", showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path("PrepareDummyData", "data_processed"), showWarnings = FALSE, recursive = TRUE)
 
 # -----------------------------------------
 # 2列CSVを安全に読む関数
@@ -36,8 +36,6 @@ qt_allsize <- read_xy_csv(file.path(input_dir, "qt_allsize.csv"), x_name = "year
   select(year, cpue_total)
 
 print(qt_allsize)
-
-write_csv(qt_allsize, "data_processed/year_total_cpue_extracted.csv")
 
 # -----------------------------------------
 # 2. サイズ別の年別漁獲効率
@@ -80,8 +78,6 @@ year_size_cpue <- bind_rows(
 
 print(year_size_cpue)
 
-write_csv(year_size_cpue, "data_processed/year_size_cpue_extracted.csv")
-
 # -----------------------------------------
 # 3. 年月ごとのデータ数
 # 修正版：
@@ -121,12 +117,6 @@ ym_counts <- tibble(
 
 print(ym_counts, n = nrow(ym_counts))
 
-write_csv(
-  ym_counts |>
-    mutate(ym = as.character(ym)),
-  "data_processed/ym_counts_extracted.csv"
-)
-
 # -----------------------------------------
 # 4. 1行=1曳網の擬似フルデータ作成
 # -----------------------------------------
@@ -134,6 +124,10 @@ set.seed(123)
 
 vessel_candidates <- c("稲荷丸", "大成丸", "第八正利丸", "清竜丸", "海幸丸")
 area_candidates <- c("151", "152", "161", "162", "172", "201", "202", "203", "212", "213", "214", "223", "224")
+vessel_code_tbl <- tibble(
+  vessel = vessel_candidates,
+  shipCode = c(1L, 2L, 3L, 4L, 5L)
+)
 
 year_effect_tbl <- tibble(
   year = c(2020L, 2021L, 2022L, 2023L, 2024L),
@@ -145,6 +139,21 @@ year_effect_tbl <- tibble(
   sho_mult = c(1.00, 1.00, 1.00, 1.05, 0.95),
   shosho_mult = c(1.00, 1.00, 1.00, 1.05, 0.95)
 )
+
+# サイズ別の水深-CPUE 2点から直線効果を作る
+depth_line_tbl <- tibble(
+  size_class = c("chu", "dai", "toku", "tokudai"),
+  x1 = c(16.53543307086614, 16.35270420587438, 16.554146675805345, 16.449430676490273),
+  y1 = c(0.23459567554055738, 0.23638878032648858, 0.15924862919808191, 0.044879437374414355),
+  x2 = c(42.67716535433071, 42.70871538947177, 43.05003427004798, 43.08841259209645),
+  y2 = c(-0.3087114110736153, -0.1494453296455518, -0.027416038382453323, 0.28033824514400596)
+) |>
+  mutate(
+    b = (y2 - y1) / (x2 - x1),
+    a = y1 - b * x1
+  )
+
+eps <- 0.02
 
 akagai_dummy_tows <- ym_counts |>
   mutate(ym = as.character(ym)) |>
@@ -192,28 +201,50 @@ akagai_dummy_tows <- ym_counts |>
     dai_base = dai,
     toku_base = toku,
     tokudai_base = tokudai,
-    chu = rpois(n(), lambda = pmax(chu_base * chu_mult, 0.1)),
-    dai = rpois(n(), lambda = pmax(dai_base * dai_mult, 0.1)),
-    toku = rpois(n(), lambda = pmax(toku_base * toku_mult, 0.1)),
-    tokudai = rpois(n(), lambda = pmax(tokudai_base * tokudai_mult, 0.1)),
+    # 水深効果は負値を避けるため下限を設け、年平均を壊しにくいよう平均1に正規化する
+    depth_eff_chu_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "chu"] + depth_line_tbl$b[depth_line_tbl$size_class == "chu"] * depth_mid),
+    depth_eff_dai_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "dai"] + depth_line_tbl$b[depth_line_tbl$size_class == "dai"] * depth_mid),
+    depth_eff_toku_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "toku"] + depth_line_tbl$b[depth_line_tbl$size_class == "toku"] * depth_mid),
+    depth_eff_tokudai_raw = pmax(eps, depth_line_tbl$a[depth_line_tbl$size_class == "tokudai"] + depth_line_tbl$b[depth_line_tbl$size_class == "tokudai"] * depth_mid),
+    depth_eff_chu = depth_eff_chu_raw / mean(depth_eff_chu_raw, na.rm = TRUE),
+    depth_eff_dai = depth_eff_dai_raw / mean(depth_eff_dai_raw, na.rm = TRUE),
+    depth_eff_toku = depth_eff_toku_raw / mean(depth_eff_toku_raw, na.rm = TRUE),
+    depth_eff_tokudai = depth_eff_tokudai_raw / mean(depth_eff_tokudai_raw, na.rm = TRUE),
+    chu = rpois(n(), lambda = pmax(chu_base * chu_mult * depth_eff_chu, 0.1)),
+    dai = rpois(n(), lambda = pmax(dai_base * dai_mult * depth_eff_dai, 0.1)),
+    toku = rpois(n(), lambda = pmax(toku_base * toku_mult * depth_eff_toku, 0.1)),
+    tokudai = rpois(n(), lambda = pmax(tokudai_base * tokudai_mult * depth_eff_tokudai, 0.1)),
     ware = rpois(n(), lambda = pmax((dai_base * 0.18 + toku_base * 0.12) * ware_mult, 0.1)),
     sho = rpois(n(), lambda = pmax((chu_base * 0.45 + 1.2) * sho_mult, 0.1)),
     shosho = rpois(n(), lambda = pmax((chu_base * 0.25 + 0.8) * shosho_mult, 0.1)),
-    count_total = chu + dai + toku + tokudai + ware + sho + shosho
+    count_total = chu + dai + toku + tokudai + ware + sho + shosho,
+    shipCode = vessel_code_tbl$shipCode[match(vessel, vessel_code_tbl$vessel)],
+    year_reiwa = year - 2018L,
+    day = as.integer(substr(date, 9, 10)),
+    operation_type = 1L,
+    duration_time = sprintf("%02d:%02d", duration_min %/% 60, duration_min %% 60),
+    area_start = area,
+    area_end = area
   ) |>
+  (\(x) {
+    print(summary(x$depth_mid))
+    print(summary(x$depth_eff_chu))
+    print(summary(x$depth_eff_dai))
+    print(summary(x$depth_eff_toku))
+    print(summary(x$depth_eff_tokudai))
+    x
+  })() |>
   select(
-    vessel, date, tow_no, start_time, end_time, area, depth_min, depth_max, speed_knot,
-    chu, dai, toku, tokudai, ware, sho, shosho,
-    year, month, ym, duration_min, depth_mid, count_total
+    shipCode, year_reiwa, month, day, area, operation_type,
+    start_time, end_time, duration_time, speed_knot, area_start, area_end,
+    depth_min, depth_max, count_total, chu, dai, toku, tokudai, ware, sho, shosho
   )
 
-write_csv(akagai_dummy_tows, "data_processed/akagai_dummy_tows.csv")
+write_csv(akagai_dummy_tows, "PrepareDummyData/data_processed/akagai_dummy_tows.csv")
 
 print(head(akagai_dummy_tows))
 str(akagai_dummy_tows)
 print(summary(akagai_dummy_tows))
-print(table(format(as.Date(akagai_dummy_tows$date), "%Y-%m")))
-print(table(akagai_dummy_tows$vessel))
 
 # -----------------------------------------
 # 5. 確認用プロット
@@ -254,8 +285,4 @@ p3 <- ggplot(ym_counts, aes(x = ym, y = n_tow)) +
 print(p3)
 
 cat("\n=== saved files ===\n")
-cat("data_processed/year_total_cpue_extracted.csv\n")
-cat("data_processed/year_size_cpue_extracted.csv\n")
-cat("data_processed/ym_counts_extracted.csv\n")
-cat("data_processed/akagai_dummy_tows.csv\n")
-cat("data_processed/extracted_figure_data.rds\n")
+cat("PrepareDummyData/data_processed/akagai_dummy_tows.csv\n")

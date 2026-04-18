@@ -26,6 +26,7 @@ packrat/src/
 # Large outputs / results
 *.rds
 *.csv
+*.xlsx
 *.RDS
 *.pdf
 *.png
