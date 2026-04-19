@@ -681,6 +681,136 @@ make_raw_cpue_table <- function(data_obj, response_name) {
     dplyr::arrange(.data$year)
 }
 
+# depth の二次項を入れたモデルの予測値を、depth ごとの raw CPUE と比較するためのテーブルを作る。
+make_depth_quad_prediction_table <- function(model_obj, data_obj, n_grid = 100) {
+  model_frame_names <- names(stats::model.frame(model_obj))
+  depth_min <- min(data_obj$depth_glmm, na.rm = TRUE)
+  depth_max <- max(data_obj$depth_glmm, na.rm = TRUE)
+  depth_mean <- mean(data_obj$depth_glmm, na.rm = TRUE)
+  depth_sd <- stats::sd(data_obj$depth_glmm, na.rm = TRUE)
+
+  if (!is.finite(depth_min) || !is.finite(depth_max)) {
+    stop("depth_glmm range must be finite for depth quad diagnostic.")
+  }
+
+  if (!is.finite(depth_sd) || depth_sd <= 0) {
+    stop("depth_glmm standard deviation must be finite and > 0 for depth quad diagnostic.")
+  }
+
+  depth_grid <- seq(depth_min, depth_max, length.out = n_grid)
+  year_levels_used <- get_observed_levels(data_obj$year)
+
+  pred_grid <- tidyr::expand_grid(
+    year = factor(year_levels_used, levels = levels(data_obj$year)),
+    depth_glmm = depth_grid
+  ) |>
+    dplyr::mutate(
+      depth_glmm_sc = (.data$depth_glmm - depth_mean) / depth_sd
+    )
+
+  if ("month" %in% model_frame_names) {
+    year_month_tbl <- data_obj |>
+      dplyr::filter(!is.na(.data$year), !is.na(.data$month)) |>
+      dplyr::distinct(.data$year, .data$month)
+
+    pred_grid <- pred_grid |>
+      dplyr::left_join(year_month_tbl, by = "year")
+  }
+
+  pred_grid$effort_glmm <- 1
+
+  if ("area" %in% model_frame_names) {
+    pred_grid$area <- factor(get_observed_levels(data_obj$area)[[1]], levels = levels(data_obj$area))
+  }
+
+  if ("vessel" %in% model_frame_names) {
+    pred_grid$vessel <- factor(get_observed_levels(data_obj$vessel)[[1]], levels = levels(data_obj$vessel))
+  }
+
+  pred_vals <- predict(
+    model_obj,
+    newdata = pred_grid,
+    type = "response",
+    re.form = NA
+  )
+
+  pred_grid |>
+    dplyr::mutate(
+      year = to_year_numeric(.data$year),
+      predicted = as.numeric(pred_vals)
+    ) |>
+    dplyr::group_by(.data$year, .data$depth_glmm) |>
+    dplyr::summarise(
+      predicted = mean(.data$predicted, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    dplyr::group_by(.data$depth_glmm) |>
+    dplyr::summarise(
+      predicted = mean(.data$predicted, na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+
+# depth を n_bins 区分して年別 raw CPUE と比較するためのテーブルを作る。
+make_depth_binned_raw_cpue <- function(data_obj, n_bins = 12) {
+  raw_tbl <- data_obj |>
+    dplyr::filter(
+      !is.na(.data$depth_glmm),
+      !is.na(.data$response),
+      !is.na(.data$effort_glmm),
+      is.finite(.data$depth_glmm),
+      is.finite(.data$response),
+      is.finite(.data$effort_glmm)
+    )
+
+  depth_breaks <- seq(min(raw_tbl$depth_glmm), max(raw_tbl$depth_glmm), length.out = n_bins + 1)
+
+  if (length(unique(depth_breaks)) < 2) {
+    return(tibble::tibble(
+      depth_mid = mean(raw_tbl$depth_glmm, na.rm = TRUE),
+      raw_cpue = sum(raw_tbl$response, na.rm = TRUE) / sum(raw_tbl$effort_glmm, na.rm = TRUE),
+      n_rows = nrow(raw_tbl)
+    ))
+  }
+
+  raw_tbl |>
+    dplyr::mutate(
+      depth_bin = cut(.data$depth_glmm, breaks = depth_breaks, include.lowest = TRUE)
+    ) |>
+    dplyr::group_by(.data$depth_bin) |>
+    dplyr::summarise(
+      depth_mid = mean(.data$depth_glmm, na.rm = TRUE),
+      total_response = sum(.data$response, na.rm = TRUE),
+      total_effort = sum(.data$effort_glmm, na.rm = TRUE),
+      raw_cpue = .data$total_response / .data$total_effort,
+      n_rows = dplyr::n(),
+      .groups = "drop"
+    ) |>
+    dplyr::filter(.data$total_effort > 0) |>
+    dplyr::select("depth_mid", "raw_cpue", "n_rows")
+}
+
+# depth の二次項を入れたモデルの当てはまりを、depth ごとの raw CPUE と比較して診断する図を保存する。
+plot_depth_quad_diagnostic <- function(pred_tbl, raw_tbl, output_path, title_text) {
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_point(
+      data = raw_tbl,
+      ggplot2::aes(x = .data$depth_mid, y = .data$raw_cpue)
+    ) +
+    ggplot2::geom_line(
+      data = pred_tbl,
+      ggplot2::aes(x = .data$depth_glmm, y = .data$predicted)
+    ) +
+    ggplot2::labs(
+      title = title_text,
+      x = "Depth (m)",
+      y = "Expected CPUE"
+    ) +
+    ggplot2::theme_bw()
+
+  ggplot2::ggsave(output_path, p, width = 9, height = 5.5, dpi = 300)
+}
+
 # 標準化指数と raw CPUE を重ね描き用の形式に整える。
 build_overlay_table <- function(index_tbl, raw_cpue_tbl, response_name, best_model_id) {
   cpue_mean <- mean(raw_cpue_tbl$cpue, na.rm = TRUE)
@@ -1090,6 +1220,7 @@ for (response_name in response_levels) {
       index_ci_fig_path <- file.path("output", "figures", paste0("index_best_", response_name, "_ci.png"))
       overlay_fig_path <- file.path("output", "figures", paste0("overlay_best_", response_name, ".png"))
       dharma_fig_path <- file.path("output", "figures", paste0("diagnostic_best_", response_name, ".png"))
+      depth_quad_fig_path <- file.path("output", "figures", paste0("depth_quad_diagnostic_best_", response_name, ".png"))
 
       year_index_tbl <- compute_year_index_table(
         model_obj = final_fit_out$fit,
@@ -1114,6 +1245,18 @@ for (response_name in response_levels) {
         optional_pkgs = optional_pkgs,
         output_plot_path = dharma_fig_path
       )
+
+      if (identical(best_spec$depth_mode, "quad")) {
+        pred_tbl <- make_depth_quad_prediction_table(final_fit_out$fit, final_tbl)
+        raw_bin_tbl <- make_depth_binned_raw_cpue(final_tbl, n_bins = 12)
+        plot_depth_quad_diagnostic(
+          pred_tbl = pred_tbl,
+          raw_tbl = raw_bin_tbl,
+          output_path = depth_quad_fig_path,
+          title_text = paste(response_name, "depth quad diagnostic")
+        )
+        cat("response =", response_name, "| saved depth quad diagnostic =", depth_quad_fig_path, "\n")
+      }
 
       saveRDS(final_fit_out$fit, model_rds_path)
       readr::write_csv(standardized_index_tbl, year_index_csv_path)
