@@ -210,6 +210,8 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     flag_speed_missing = is.na(.data$speed_kt),
     flag_speed_nonpositive = !is.na(.data$speed_kt) & .data$speed_kt <= 0,
     flag_speed_out_of_range = !is.na(.data$speed_kt) & (.data$speed_kt <= 0.5 | .data$speed_kt > 5),
+    flag_speed_imputed = .data$flag_speed_missing | .data$flag_speed_nonpositive | .data$flag_speed_out_of_range,
+    speed_kt_for_effort = dplyr::if_else(.data$flag_speed_imputed, 3, .data$speed_kt), # 欠損・異常 speed を 3 kt で補完した effort 計算用 speed
     depth_raw_1 = suppressWarnings(as.numeric(.data[[depth_1_col]])),
     depth_raw_2 = suppressWarnings(as.numeric(.data[[depth_2_col]])),
     flag_depth_both_missing = is.na(.data$depth_raw_1) & is.na(.data$depth_raw_2),
@@ -228,7 +230,7 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     catch_sho = suppressWarnings(as.numeric(.data[[catch_sho_col]])),
     catch_shosho = suppressWarnings(as.numeric(.data[[catch_shosho_col]])),
     count_total_raw = suppressWarnings(as.numeric(.data[[catch_total_col]])),
-    effort_default = dplyr::if_else(!is.na(.data$speed_kt) & .data$speed_kt > 0 & !is.na(.data$duration_hours) & .data$duration_hours > 0, .data$speed_kt * .data$duration_hours, NA_real_),
+    effort_default = dplyr::if_else(!is.na(.data$duration_hours) & .data$duration_hours > 0, .data$speed_kt_for_effort * .data$duration_hours, NA_real_),
     catch_total = .data$count_total_raw, # 現時点では raw 合計値と同じ。後段互換のため残す
     cpue_total_raw = dplyr::if_else(!is.na(.data$effort_default) & .data$effort_default > 0, .data$catch_total / .data$effort_default, NA_real_),
     cpue_total_duration_raw = dplyr::if_else(!is.na(.data$duration_hours) & .data$duration_hours > 0, .data$catch_total / .data$duration_hours, NA_real_)
@@ -249,11 +251,13 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     "area",
     "duration_hours",
     "speed_kt",
+    "speed_kt_for_effort",
     "flag_duration_missing",
     "flag_duration_nonpositive",
     "flag_speed_missing",
     "flag_speed_nonpositive",
     "flag_speed_out_of_range",
+    "flag_speed_imputed",
     "depth_raw_1",
     "depth_raw_2",
     "flag_depth_both_missing",
@@ -314,13 +318,14 @@ duration_check_summary <- tibble::tibble(
 )
 
 speed_check_summary <- tibble::tibble(
-  metric = c("rows_total", "speed_missing_n", "speed_nonpositive_n", "speed_out_of_range_n", "speed_valid_n", "effort_default_missing_n", "effort_default_valid_n"),
+  metric = c("rows_total", "speed_missing_n", "speed_nonpositive_n", "speed_out_of_range_n", "speed_imputed_n", "speed_valid_n", "effort_default_missing_n", "effort_default_valid_n"),
   value = c(
     nrow(raw_tbl),
     sum(raw_tbl$flag_speed_missing, na.rm = TRUE),
     sum(raw_tbl$flag_speed_nonpositive, na.rm = TRUE),
     sum(raw_tbl$flag_speed_out_of_range, na.rm = TRUE),
-    sum(!raw_tbl$flag_speed_missing & !raw_tbl$flag_speed_nonpositive & !raw_tbl$flag_speed_out_of_range, na.rm = TRUE),
+    sum(raw_tbl$flag_speed_imputed, na.rm = TRUE),
+    sum(!raw_tbl$flag_speed_imputed, na.rm = TRUE),
     sum(is.na(raw_tbl$effort_default), na.rm = TRUE),
     sum(!is.na(raw_tbl$effort_default), na.rm = TRUE)
   )
@@ -402,6 +407,7 @@ cat("duration missing n =", sum(raw_tbl$flag_duration_missing, na.rm = TRUE), "\
 cat("duration nonpositive n =", sum(raw_tbl$flag_duration_nonpositive, na.rm = TRUE), "\n")
 cat("speed missing n =", sum(raw_tbl$flag_speed_missing, na.rm = TRUE), "\n")
 cat("speed out of range n =", sum(raw_tbl$flag_speed_out_of_range, na.rm = TRUE), "\n")
+cat("speed imputed n =", sum(raw_tbl$flag_speed_imputed, na.rm = TRUE), "\n")
 cat("effort_default missing n =", sum(is.na(raw_tbl$effort_default), na.rm = TRUE), "\n")
 cat("depth both missing n =", sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE), "\n")
 cat("depth only one n =", sum(raw_tbl$flag_depth_only_one, na.rm = TRUE), "\n")
