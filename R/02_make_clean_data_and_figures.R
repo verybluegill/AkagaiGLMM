@@ -220,6 +220,7 @@ make_annual_by_size_table <- function(cleaned_long_tbl) {
     dplyr::arrange(.data$year, .data$size_label)
 }
 
+# 年別の全サイズ合計 CPUE を折れ線図で描き、PNGで保存する関数
 plot_annual_cpue_total <- function(plot_tbl, output_png) {
   p <- ggplot2::ggplot(plot_tbl, ggplot2::aes(x = .data$year, y = .data$cpue_ratio)) +
     ggplot2::geom_line(linewidth = 1.2, color = "#2166AC") +
@@ -236,6 +237,7 @@ plot_annual_cpue_total <- function(plot_tbl, output_png) {
   cat("saved:", output_png, "\n")
 }
 
+# 年別のサイズ別 CPUE を折れ線図で描き、PNGで保存する関数
 plot_annual_cpue_by_size <- function(plot_tbl, output_png) {
   p <- ggplot2::ggplot(plot_tbl, ggplot2::aes(x = .data$year, y = .data$cpue_ratio, color = .data$size_label, group = .data$size_label)) +
     ggplot2::geom_line(linewidth = 1.1) +
@@ -254,6 +256,7 @@ plot_annual_cpue_by_size <- function(plot_tbl, output_png) {
   cat("saved:", output_png, "\n")
 }
 
+# 深度とサイズ別CPUEの関係を散布図+平滑線で描き、PNGで保存する関数
 plot_depth_cpue_pdf_style <- function(cleaned_long_tbl, output_png) {
   plot_tbl <- cleaned_long_tbl |>
     dplyr::filter(.data$effort_hours >= 1, !is.na(.data$depth_use), .data$depth_use >= 10, .data$depth_use <= 70, !is.na(.data$cpue)) |>
@@ -280,6 +283,7 @@ plot_depth_cpue_pdf_style <- function(cleaned_long_tbl, output_png) {
   cat("saved:", output_png, "\n")
 }
 
+#年ごとの指標を大きい順に順位づけ
 compute_year_rank <- function(plot_tbl, value_col, target_year = 2023) {
   rank_tbl <- plot_tbl |>
     dplyr::filter(!is.na(.data[[value_col]])) |>
@@ -296,6 +300,7 @@ compute_year_rank <- function(plot_tbl, value_col, target_year = 2023) {
   x
 }
 
+#各 area を構成する頂点IDの対応表
 area_polygon_def <- list(
   "151" = c(1, 2, 5, 6),
   "152" = c(2, 3, 4, 5),
@@ -317,6 +322,7 @@ area_polygon_def <- list(
   "224" = c(62, 60, 56, 55, 54, 53, 52, 63)
 )
 
+#polygon地図が使えないときの代替レイアウト
 make_tile_layout <- function(area_levels) {
   area_levels <- unique(as.character(area_levels))
   area_levels <- area_levels[!is.na(area_levels) & area_levels != ""]
@@ -329,6 +335,7 @@ make_tile_layout <- function(area_levels) {
   )
 }
 
+#頂点IDの列から、実際の sf polygon を1個作る関数
 make_polygon_from_ids <- function(id_vec, pts_df) {
   xy <- pts_df |>
     dplyr::filter(.data$point_id %in% id_vec) |>
@@ -343,6 +350,7 @@ make_polygon_from_ids <- function(id_vec, pts_df) {
   sf::st_polygon(list(xy))
 }
 
+#全漁区の polygon をまとめて sf オブジェクトにする関数
 build_polygon_geometry <- function() {
   if (!requireNamespace("sf", quietly = TRUE)) {
     return(NULL)
@@ -372,6 +380,7 @@ build_polygon_geometry <- function() {
     sf::st_as_sf()
 }
 
+#ある1サイズについて、area別CPUE前年差の図を描く関数
 plot_area_map_single <- function(plot_tbl, size_label, output_png) {
   map_tbl <- plot_tbl |>
     dplyr::filter(!is.na(.data$year), .data$year %in% 2021:2024)
