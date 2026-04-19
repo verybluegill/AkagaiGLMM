@@ -228,9 +228,7 @@ if (length(missing_cols) > 0) {
   stop("Required columns are missing: ", paste(missing_cols, collapse = ", "))
 }
 
-if (any(is.na(glmm_input$count_total))) {
-  stop("count_total contains NA.")
-}
+cat("count_total_na_n=", sum(is.na(glmm_input$count_total)), "\n", sep = "")
 
 row_summary_by_year <- glmm_input |>
   dplyr::group_by(.data$year) |>

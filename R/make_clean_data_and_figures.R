@@ -24,6 +24,14 @@ save_check_csv <- function(data, path) {
   cat("saved:", path, "\n")
 }
 
+parse_numeric_trim <- function(x) {
+  x_chr <- trimws(as.character(x))
+  x_chr[x_chr %in% c("", "NA", "NaN")] <- NA_character_
+  suppressWarnings(as.numeric(x_chr))
+}
+
+valid_area_codes <- c(151L, 152L, 161L, 162L, 171L, 172L, 181L, 182L, 191L, 192L, 201L, 202L, 203L, 212L, 213L, 214L, 223L, 224L)
+
 make_depth_use <- function(depth_raw_1, depth_raw_2) {
   dplyr::case_when(
     is.na(depth_raw_1) & is.na(depth_raw_2) ~ NA_real_,
@@ -37,34 +45,73 @@ make_depth_use <- function(depth_raw_1, depth_raw_2) {
 }
 
 build_glmm_input_tbl <- function(raw_tbl) {
+  area_start_src <- if ("area_start" %in% names(raw_tbl)) raw_tbl$area_start else raw_tbl$area
+  area_end_src <- if ("area_end" %in% names(raw_tbl)) raw_tbl$area_end else raw_tbl$area
+  speed_src <- if ("speed_kt" %in% names(raw_tbl)) raw_tbl$speed_kt else rep(NA_real_, nrow(raw_tbl))
+  count_total_raw_src <- if ("count_total_raw" %in% names(raw_tbl)) raw_tbl$count_total_raw else raw_tbl$catch_total
+  catch_ware_src <- if ("catch_ware" %in% names(raw_tbl)) raw_tbl$catch_ware else rep(0, nrow(raw_tbl))
+  catch_sho_src <- if ("catch_sho" %in% names(raw_tbl)) raw_tbl$catch_sho else rep(0, nrow(raw_tbl))
+  catch_shosho_src <- if ("catch_shosho" %in% names(raw_tbl)) raw_tbl$catch_shosho else rep(0, nrow(raw_tbl))
+
   glmm_input <- raw_tbl |>
     dplyr::mutate(
       date = as.Date(.data$ymd_reiwa),
       year = suppressWarnings(as.integer(.data$year)),
-      month = suppressWarnings(as.integer(.data$month)),
-      area = as.character(.data$area),
-      vessel = as.character(.data$vessel),
-      catch_total = suppressWarnings(as.numeric(.data$catch_total)),
-      catch_medium = suppressWarnings(as.numeric(.data$catch_medium)),
-      catch_dai = suppressWarnings(as.numeric(.data$catch_dai)),
-      catch_toku = suppressWarnings(as.numeric(.data$catch_toku)),
-      catch_tokudai = suppressWarnings(as.numeric(.data$catch_tokudai)),
-      chu = catch_medium,
-      dai = catch_dai,
-      toku = catch_toku,
-      tokudai = catch_tokudai,
-      ware = 0,
-      sho = 0,
-      shosho = 0,
-      chu = dplyr::coalesce(.data$chu, 0),
-      dai = dplyr::coalesce(.data$dai, 0),
-      toku = dplyr::coalesce(.data$toku, 0),
-      tokudai = dplyr::coalesce(.data$tokudai, 0),
-      count_total = dplyr::if_else(
-        !is.na(.data$catch_total),
-        .data$catch_total,
+      month = suppressWarnings(as.integer(parse_numeric_trim(.data$month))),
+      day = suppressWarnings(as.integer(parse_numeric_trim(.data$day))),
+      month = dplyr::if_else(!is.na(.data$month) & .data$month %in% 1:12, .data$month, NA_integer_),
+      day = dplyr::if_else(!is.na(.data$day) & .data$day %in% 1:31, .data$day, NA_integer_),
+      day = dplyr::if_else(!is.na(.data$year) & !is.na(.data$month) & !is.na(.data$day) & is.na(.data$date), NA_integer_, .data$day),
+      vessel = suppressWarnings(as.integer(parse_numeric_trim(.data$vessel))),
+      vessel = dplyr::if_else(!is.na(.data$vessel) & .data$vessel %in% 1:5, .data$vessel, NA_integer_),
+      area_start = parse_numeric_trim(.env$area_start_src),
+      area_end = parse_numeric_trim(.env$area_end_src),
+      area = dplyr::case_when(
+        !is.na(.data$area_start) & as.integer(.data$area_start) %in% valid_area_codes ~ as.integer(.data$area_start),
+        (is.na(.data$area_start) | !(as.integer(.data$area_start) %in% valid_area_codes)) &
+          !is.na(.data$area_end) & as.integer(.data$area_end) %in% valid_area_codes ~ as.integer(.data$area_end),
+        TRUE ~ NA_integer_
+      ),
+      count_total_raw = parse_numeric_trim(.env$count_total_raw_src),
+      chu_raw = parse_numeric_trim(.data$catch_medium),
+      dai_raw = parse_numeric_trim(.data$catch_dai),
+      toku_raw = parse_numeric_trim(.data$catch_toku),
+      tokudai_raw = parse_numeric_trim(.data$catch_tokudai),
+      ware_raw = parse_numeric_trim(.env$catch_ware_src),
+      sho_raw = parse_numeric_trim(.env$catch_sho_src),
+      shosho_raw = parse_numeric_trim(.env$catch_shosho_src),
+      flag_count_total_raw_rounded = !is.na(.data$count_total_raw) & abs(.data$count_total_raw - round(.data$count_total_raw)) > 1e-8,
+      flag_chu_rounded = !is.na(.data$chu_raw) & abs(.data$chu_raw - round(.data$chu_raw)) > 1e-8,
+      flag_dai_rounded = !is.na(.data$dai_raw) & abs(.data$dai_raw - round(.data$dai_raw)) > 1e-8,
+      flag_toku_rounded = !is.na(.data$toku_raw) & abs(.data$toku_raw - round(.data$toku_raw)) > 1e-8,
+      flag_tokudai_rounded = !is.na(.data$tokudai_raw) & abs(.data$tokudai_raw - round(.data$tokudai_raw)) > 1e-8,
+      flag_ware_rounded = !is.na(.data$ware_raw) & abs(.data$ware_raw - round(.data$ware_raw)) > 1e-8,
+      flag_sho_rounded = !is.na(.data$sho_raw) & abs(.data$sho_raw - round(.data$sho_raw)) > 1e-8,
+      flag_shosho_rounded = !is.na(.data$shosho_raw) & abs(.data$shosho_raw - round(.data$shosho_raw)) > 1e-8,
+      flag_count_total_raw_negative = !is.na(.data$count_total_raw) & .data$count_total_raw < 0,
+      flag_chu_negative = !is.na(.data$chu_raw) & .data$chu_raw < 0,
+      flag_dai_negative = !is.na(.data$dai_raw) & .data$dai_raw < 0,
+      flag_toku_negative = !is.na(.data$toku_raw) & .data$toku_raw < 0,
+      flag_tokudai_negative = !is.na(.data$tokudai_raw) & .data$tokudai_raw < 0,
+      flag_ware_negative = !is.na(.data$ware_raw) & .data$ware_raw < 0,
+      flag_sho_negative = !is.na(.data$sho_raw) & .data$sho_raw < 0,
+      flag_shosho_negative = !is.na(.data$shosho_raw) & .data$shosho_raw < 0,
+      count_total_raw = dplyr::if_else(.data$flag_count_total_raw_negative, NA_real_, round(.data$count_total_raw)),
+      chu = dplyr::if_else(.data$flag_chu_negative, NA_real_, round(.data$chu_raw)),
+      dai = dplyr::if_else(.data$flag_dai_negative, NA_real_, round(.data$dai_raw)),
+      toku = dplyr::if_else(.data$flag_toku_negative, NA_real_, round(.data$toku_raw)),
+      tokudai = dplyr::if_else(.data$flag_tokudai_negative, NA_real_, round(.data$tokudai_raw)),
+      ware = dplyr::if_else(.data$flag_ware_negative, NA_real_, round(.data$ware_raw)),
+      sho = dplyr::if_else(.data$flag_sho_negative, NA_real_, round(.data$sho_raw)),
+      shosho = dplyr::if_else(.data$flag_shosho_negative, NA_real_, round(.data$shosho_raw)),
+      count_total_recalc = dplyr::if_else(
+        is.na(.data$chu) | is.na(.data$dai) | is.na(.data$toku) | is.na(.data$tokudai) | is.na(.data$ware) | is.na(.data$sho) | is.na(.data$shosho),
+        NA_real_,
         .data$chu + .data$dai + .data$toku + .data$tokudai + .data$ware + .data$sho + .data$shosho
       ),
+      flag_count_total_mismatch = xor(is.na(.data$count_total_raw), is.na(.data$count_total_recalc)) |
+        (!is.na(.data$count_total_raw) & !is.na(.data$count_total_recalc) & .data$count_total_raw != .data$count_total_recalc),
+      count_total = .data$count_total_recalc,
       depth_raw = suppressWarnings(as.numeric(.data$depth_use_raw_rule)),
       depth_min_raw = suppressWarnings(as.numeric(.data$depth_raw_1)),
       depth_max_raw = suppressWarnings(as.numeric(.data$depth_raw_2)),
@@ -74,39 +121,70 @@ build_glmm_input_tbl <- function(raw_tbl) {
       flag_depth_out_of_range = !flag_depth_missing & is.na(depth_flag_base),
       flag_depth_bad = flag_depth_missing | flag_depth_out_of_range,
       depth_glmm = dplyr::if_else(flag_depth_bad, NA_real_, as.numeric(depth_flag_base)),
+      speed_kt_raw = parse_numeric_trim(.env$speed_src),
+      flag_speed_replaced = is.na(.data$speed_kt_raw) | .data$speed_kt_raw <= 0.5 | .data$speed_kt_raw > 5,
+      speed_kt = dplyr::if_else(.data$flag_speed_replaced, 3, .data$speed_kt_raw),
       duration_min_raw = suppressWarnings(as.numeric(.data$effort_hours)) * 60,
-      flag_duration_missing = is.na(duration_min_raw),
-      flag_duration_out_of_range = !is.na(duration_min_raw) & (duration_min_raw < 1 | duration_min_raw > 300),
-      flag_duration_bad = flag_duration_missing | flag_duration_out_of_range,
-      duration_min_glmm = dplyr::if_else(flag_duration_bad, NA_real_, duration_min_raw),
+      flag_duration_replaced = is.na(.data$duration_min_raw) | .data$duration_min_raw <= 10 | .data$duration_min_raw > 90,
+      duration_min_glmm = dplyr::if_else(.data$flag_duration_replaced, 60, .data$duration_min_raw),
+      flag_duration_missing = is.na(.data$duration_min_raw),
+      flag_duration_out_of_range = !is.na(.data$duration_min_raw) & (.data$duration_min_raw <= 10 | .data$duration_min_raw > 90),
+      flag_duration_bad = .data$flag_duration_replaced,
       effort_raw = duration_min_raw,
-      effort = duration_min_raw,
-      effort_glmm = duration_min_glmm,
-      flag_area_missing = is.na(.data$area) | .data$area == "",
-      flag_non_integer_count = dplyr::if_else(
-        is.na(.data$count_total),
-        TRUE,
-        abs(.data$count_total - round(.data$count_total)) > 1e-8 |
-          abs(.data$chu - round(.data$chu)) > 1e-8 |
-          abs(.data$dai - round(.data$dai)) > 1e-8 |
-          abs(.data$toku - round(.data$toku)) > 1e-8 |
-          abs(.data$tokudai - round(.data$tokudai)) > 1e-8
-      ),
+      effort = duration_min_glmm,
+      effort_glmm = .data$speed_kt * (.data$duration_min_glmm / 60),
+      flag_area_missing = is.na(.data$area),
+      flag_vessel_missing = is.na(.data$vessel),
+      flag_month_missing = is.na(.data$month),
+      flag_day_missing = is.na(.data$day),
+      flag_non_integer_count = .data$flag_count_total_raw_rounded |
+        .data$flag_chu_rounded |
+        .data$flag_dai_rounded |
+        .data$flag_toku_rounded |
+        .data$flag_tokudai_rounded |
+        .data$flag_ware_rounded |
+        .data$flag_sho_rounded |
+        .data$flag_shosho_rounded,
       flag_year_out_of_range = is.na(.data$year) | !(.data$year %in% 2020:2024),
       flag_effort_glmm_bad = is.na(.data$effort_glmm) | !is.finite(.data$effort_glmm) | .data$effort_glmm <= 0,
-      flag_use_for_main_glmm = !flag_non_integer_count &
-        !flag_year_out_of_range &
+      flag_use_for_main_glmm = !flag_year_out_of_range &
+        !flag_month_missing &
+        !flag_vessel_missing &
         !flag_area_missing &
-        !flag_effort_glmm_bad
+        !flag_effort_glmm_bad &
+        !is.na(.data$count_total),
+      flag_use_for_chu_glmm = .data$flag_use_for_main_glmm & !is.na(.data$chu),
+      flag_use_for_dai_glmm = .data$flag_use_for_main_glmm & !is.na(.data$dai),
+      flag_use_for_toku_glmm = .data$flag_use_for_main_glmm & !is.na(.data$toku),
+      flag_use_for_tokudai_glmm = .data$flag_use_for_main_glmm & !is.na(.data$tokudai),
+      catch_total = .data$count_total,
+      catch_medium = .data$chu,
+      catch_dai = .data$dai,
+      catch_toku = .data$toku,
+      catch_tokudai = .data$tokudai,
+      catch_ware = .data$ware,
+      catch_sho = .data$sho,
+      catch_shosho = .data$shosho
     ) |>
     dplyr::select(
-      "date", "year", "month", "area", "vessel", "effort", "count_total",
+      "date", "year", "month", "day", "area", "vessel", "effort", "count_total",
       "tokudai", "toku", "dai", "chu", "sho", "shosho",
       "row_id", "depth_raw", "depth_min_raw", "depth_max_raw", "depth_flag_base", "depth_cleaning_raw", "depth_glmm",
-      "duration_min_raw", "duration_min_glmm", "effort_raw", "effort_glmm",
+      "duration_min_raw", "duration_min_glmm", "speed_kt_raw", "speed_kt", "effort_raw", "effort_glmm",
       "flag_depth_missing", "flag_depth_out_of_range", "flag_depth_bad",
       "flag_duration_missing", "flag_duration_out_of_range", "flag_duration_bad",
-      "flag_area_missing", "flag_non_integer_count", "flag_year_out_of_range", "flag_effort_glmm_bad", "flag_use_for_main_glmm",
+      "flag_speed_replaced", "flag_duration_replaced",
+      "flag_area_missing", "flag_vessel_missing", "flag_month_missing", "flag_day_missing", "flag_non_integer_count", "flag_year_out_of_range", "flag_effort_glmm_bad", "flag_count_total_mismatch", "flag_use_for_main_glmm",
+      "flag_use_for_chu_glmm", "flag_use_for_dai_glmm", "flag_use_for_toku_glmm", "flag_use_for_tokudai_glmm",
+      "flag_count_total_raw_rounded", "flag_count_total_raw_negative",
+      "flag_chu_rounded", "flag_chu_negative",
+      "flag_dai_rounded", "flag_dai_negative",
+      "flag_toku_rounded", "flag_toku_negative",
+      "flag_tokudai_rounded", "flag_tokudai_negative",
+      "flag_ware_rounded", "flag_ware_negative",
+      "flag_sho_rounded", "flag_sho_negative",
+      "flag_shosho_rounded", "flag_shosho_negative",
+      "count_total_raw", "count_total_recalc", "catch_total", "catch_medium", "catch_dai", "catch_toku", "catch_tokudai", "catch_ware", "catch_sho", "catch_shosho",
       "ware"
     )
 
@@ -365,19 +443,42 @@ plot_area_map_single <- function(plot_tbl, size_label, output_png) {
 raw_tbl <- readr::read_csv(check_data_path, show_col_types = FALSE)
 glmm_input_tbl <- build_glmm_input_tbl(raw_tbl)
 
-cleaned_tbl <- raw_tbl |>
+cat("vessel_na_n=", sum(is.na(glmm_input_tbl$vessel)), "\n", sep = "")
+cat("area_na_n=", sum(is.na(glmm_input_tbl$area)), "\n", sep = "")
+cat("speed_replaced_n=", sum(glmm_input_tbl$flag_speed_replaced, na.rm = TRUE), "\n", sep = "")
+cat("duration_replaced_n=", sum(glmm_input_tbl$flag_duration_replaced, na.rm = TRUE), "\n", sep = "")
+cat("month_na_n=", sum(is.na(glmm_input_tbl$month)), "\n", sep = "")
+cat("day_na_n=", sum(is.na(glmm_input_tbl$day)), "\n", sep = "")
+cat("count_total_rounded_n=", sum(glmm_input_tbl$flag_count_total_raw_rounded, na.rm = TRUE), "\n", sep = "")
+cat("count_total_negative_to_na_n=", sum(glmm_input_tbl$flag_count_total_raw_negative, na.rm = TRUE), "\n", sep = "")
+cat("chu_rounded_n=", sum(glmm_input_tbl$flag_chu_rounded, na.rm = TRUE), "\n", sep = "")
+cat("chu_negative_to_na_n=", sum(glmm_input_tbl$flag_chu_negative, na.rm = TRUE), "\n", sep = "")
+cat("dai_rounded_n=", sum(glmm_input_tbl$flag_dai_rounded, na.rm = TRUE), "\n", sep = "")
+cat("dai_negative_to_na_n=", sum(glmm_input_tbl$flag_dai_negative, na.rm = TRUE), "\n", sep = "")
+cat("toku_rounded_n=", sum(glmm_input_tbl$flag_toku_rounded, na.rm = TRUE), "\n", sep = "")
+cat("toku_negative_to_na_n=", sum(glmm_input_tbl$flag_toku_negative, na.rm = TRUE), "\n", sep = "")
+cat("tokudai_rounded_n=", sum(glmm_input_tbl$flag_tokudai_rounded, na.rm = TRUE), "\n", sep = "")
+cat("tokudai_negative_to_na_n=", sum(glmm_input_tbl$flag_tokudai_negative, na.rm = TRUE), "\n", sep = "")
+cat("ware_rounded_n=", sum(glmm_input_tbl$flag_ware_rounded, na.rm = TRUE), "\n", sep = "")
+cat("ware_negative_to_na_n=", sum(glmm_input_tbl$flag_ware_negative, na.rm = TRUE), "\n", sep = "")
+cat("sho_rounded_n=", sum(glmm_input_tbl$flag_sho_rounded, na.rm = TRUE), "\n", sep = "")
+cat("sho_negative_to_na_n=", sum(glmm_input_tbl$flag_sho_negative, na.rm = TRUE), "\n", sep = "")
+cat("shosho_rounded_n=", sum(glmm_input_tbl$flag_shosho_rounded, na.rm = TRUE), "\n", sep = "")
+cat("shosho_negative_to_na_n=", sum(glmm_input_tbl$flag_shosho_negative, na.rm = TRUE), "\n", sep = "")
+cat("count_total_mismatch_n=", sum(glmm_input_tbl$flag_count_total_mismatch, na.rm = TRUE), "\n", sep = "")
+cat("flag_use_for_main_glmm_true_n=", sum(glmm_input_tbl$flag_use_for_main_glmm, na.rm = TRUE), "\n", sep = "")
+
+cleaned_tbl <- glmm_input_tbl |>
   dplyr::mutate(
     year = suppressWarnings(as.integer(.data$year)),
     area = as.character(.data$area),
-    effort_hours = suppressWarnings(as.numeric(.data$effort_hours)),
-    depth_raw_1 = suppressWarnings(as.numeric(.data$depth_raw_1)),
-    depth_raw_2 = suppressWarnings(as.numeric(.data$depth_raw_2)),
-    catch_total = suppressWarnings(as.numeric(.data$catch_total)),
-    catch_medium = suppressWarnings(as.numeric(.data$catch_medium)),
-    catch_dai = suppressWarnings(as.numeric(.data$catch_dai)),
-    catch_toku = suppressWarnings(as.numeric(.data$catch_toku)),
-    catch_tokudai = suppressWarnings(as.numeric(.data$catch_tokudai)),
-    depth_use = make_depth_use(.data$depth_raw_1, .data$depth_raw_2)
+    effort_hours = suppressWarnings(as.numeric(.data$duration_min_glmm)) / 60,
+    depth_use = suppressWarnings(as.numeric(.data$depth_glmm)),
+    catch_total = suppressWarnings(as.numeric(.data$count_total)),
+    catch_medium = suppressWarnings(as.numeric(.data$chu)),
+    catch_dai = suppressWarnings(as.numeric(.data$dai)),
+    catch_toku = suppressWarnings(as.numeric(.data$toku)),
+    catch_tokudai = suppressWarnings(as.numeric(.data$tokudai))
   ) |>
   dplyr::filter(
     .data$year %in% 2020:2024,
@@ -455,7 +556,7 @@ main_glmm_dropped_rows <- glmm_input_tbl |>
   dplyr::select(dplyr::any_of(c(
     "row_id", "date", "year", "month", "vessel", "area", "count_total",
     "duration_min_raw", "duration_min_glmm", "effort_raw", "effort_glmm",
-    "flag_year_out_of_range", "flag_area_missing", "flag_effort_glmm_bad", "flag_non_integer_count"
+    "flag_year_out_of_range", "flag_month_missing", "flag_vessel_missing", "flag_area_missing", "flag_effort_glmm_bad", "flag_non_integer_count", "flag_count_total_mismatch"
   )))
 
 glmm_input_summary <- tibble::tibble(

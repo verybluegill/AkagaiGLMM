@@ -20,6 +20,12 @@ save_check_csv <- function(data, path) {
   cat("saved:", path, "\n")
 }
 
+parse_numeric_trim <- function(x) {
+  x_chr <- trimws(as.character(x))
+  x_chr[x_chr %in% c("", "NA", "NaN")] <- NA_character_
+  suppressWarnings(as.numeric(x_chr))
+}
+
 parse_effort_hours <- function(x) {
   if (inherits(x, "difftime")) {
     return(as.numeric(x, units = "hours"))
@@ -67,6 +73,8 @@ make_depth_use <- function(depth_raw_1, depth_raw_2) {
     TRUE ~ NA_real_
   )
 }
+
+valid_area_codes <- c(151L, 152L, 161L, 162L, 171L, 172L, 181L, 182L, 191L, 192L, 201L, 202L, 203L, 212L, 213L, 214L, 223L, 224L)
 
 make_date_year_check_plot <- function(raw_tbl, output_png) {
   date_tbl <- raw_tbl |>
@@ -156,6 +164,7 @@ year_col <- names(raw_dat)[[2]]
 month_col <- names(raw_dat)[[3]]
 day_col <- names(raw_dat)[[4]]
 effort_col <- names(raw_dat)[[9]]
+speed_col <- names(raw_dat)[[10]]
 area_start_col <- names(raw_dat)[[11]]
 area_end_col <- names(raw_dat)[[12]]
 depth_1_col <- names(raw_dat)[[13]]
@@ -165,6 +174,9 @@ catch_medium_col <- names(raw_dat)[[16]]
 catch_dai_col <- names(raw_dat)[[17]]
 catch_toku_col <- names(raw_dat)[[18]]
 catch_tokudai_col <- names(raw_dat)[[19]]
+catch_ware_col <- names(raw_dat)[[20]]
+catch_sho_col <- names(raw_dat)[[21]]
+catch_shosho_col <- names(raw_dat)[[22]]
 
 raw_tbl <- tibble::as_tibble(raw_dat) |>
   dplyr::mutate(
@@ -227,6 +239,74 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     "catch_dai",
     "catch_toku",
     "catch_tokudai",
+    "cpue_total_raw"
+  )
+
+raw_tbl <- raw_tbl |>
+  dplyr::mutate(
+    year_reiwa_raw = suppressWarnings(as.integer(parse_numeric_trim(.env$raw_dat[[year_col]]))),
+    month = suppressWarnings(as.integer(parse_numeric_trim(.env$raw_dat[[month_col]]))),
+    day = suppressWarnings(as.integer(parse_numeric_trim(.env$raw_dat[[day_col]]))),
+    month = dplyr::if_else(!is.na(.data$month) & .data$month %in% 1:12, .data$month, NA_integer_),
+    day = dplyr::if_else(!is.na(.data$day) & .data$day %in% 1:31, .data$day, NA_integer_),
+    year_raw = 2018L + .data$year_reiwa_raw,
+    ymd_reiwa = suppressWarnings(lubridate::ymd(sprintf("%04d-%02d-%02d", .data$year_raw, .data$month, .data$day))),
+    day = dplyr::if_else(!is.na(.data$year_raw) & !is.na(.data$month) & !is.na(.data$day) & is.na(.data$ymd_reiwa), NA_integer_, .data$day),
+    ymd_reiwa = suppressWarnings(lubridate::ymd(sprintf("%04d-%02d-%02d", .data$year_raw, .data$month, .data$day))),
+    flag_year_out_of_scope = is.na(.data$year_raw) | !(.data$year_raw %in% 2020:2024),
+    ymd_reiwa = dplyr::if_else(.data$flag_year_out_of_scope, as.Date(NA), .data$ymd_reiwa),
+    year = dplyr::if_else(.data$flag_year_out_of_scope, NA_integer_, .data$year_raw),
+    vessel_raw = parse_numeric_trim(.env$raw_dat[[vessel_col]]),
+    vessel = dplyr::if_else(!is.na(.data$vessel_raw) & .data$vessel_raw %in% 1:5, as.integer(.data$vessel_raw), NA_integer_),
+    area_start = parse_numeric_trim(.env$raw_dat[[area_start_col]]),
+    area_end = parse_numeric_trim(.env$raw_dat[[area_end_col]]),
+    area = dplyr::case_when(
+      !is.na(.data$area_start) & as.integer(.data$area_start) %in% valid_area_codes ~ as.integer(.data$area_start),
+      (is.na(.data$area_start) | !(as.integer(.data$area_start) %in% valid_area_codes)) &
+        !is.na(.data$area_end) & as.integer(.data$area_end) %in% valid_area_codes ~ as.integer(.data$area_end),
+      TRUE ~ NA_integer_
+    ),
+    speed_kt = parse_numeric_trim(.env$raw_dat[[speed_col]]),
+    catch_ware = suppressWarnings(as.numeric(.env$raw_dat[[catch_ware_col]])),
+    catch_sho = suppressWarnings(as.numeric(.env$raw_dat[[catch_sho_col]])),
+    catch_shosho = suppressWarnings(as.numeric(.env$raw_dat[[catch_shosho_col]])),
+    count_total_raw = suppressWarnings(as.numeric(.env$raw_dat[[catch_total_col]]))
+  ) |>
+  dplyr::select(
+    "row_id",
+    "year_reiwa_raw",
+    "month",
+    "day",
+    "ymd_reiwa",
+    "year",
+    "flag_year_out_of_scope",
+    "vessel",
+    "vessel_raw",
+    "area_start",
+    "area_end",
+    "area",
+    "effort_hours",
+    "speed_kt",
+    "flag_effort_missing",
+    "flag_effort_nonpositive",
+    "depth_raw_1",
+    "depth_raw_2",
+    "flag_depth_both_missing",
+    "flag_depth_only_one",
+    "flag_depth_both_present",
+    "flag_depth_both_le_50",
+    "flag_depth_one_le_50_one_gt_50",
+    "flag_depth_both_gt_50",
+    "depth_use_raw_rule",
+    "catch_total",
+    "catch_medium",
+    "catch_dai",
+    "catch_toku",
+    "catch_tokudai",
+    "catch_ware",
+    "catch_sho",
+    "catch_shosho",
+    "count_total_raw",
     "cpue_total_raw"
   )
 
@@ -333,6 +413,10 @@ cat("used date rule = ymd_reiwa\n")
 cat("rows total =", nrow(raw_tbl), "\n")
 cat("rows with year in 2020:2024 =", sum(!is.na(raw_tbl$year)), "\n")
 cat("rows out of scope =", sum(raw_tbl$flag_year_out_of_scope, na.rm = TRUE), "\n")
+cat("vessel_na_n=", sum(is.na(raw_tbl$vessel)), "\n", sep = "")
+cat("area_na_n=", sum(is.na(raw_tbl$area)), "\n", sep = "")
+cat("month_na_n=", sum(is.na(raw_tbl$month)), "\n", sep = "")
+cat("day_na_n=", sum(is.na(raw_tbl$day)), "\n", sep = "")
 cat("effort missing n =", sum(raw_tbl$flag_effort_missing, na.rm = TRUE), "\n")
 cat("effort nonpositive n =", sum(raw_tbl$flag_effort_nonpositive, na.rm = TRUE), "\n")
 cat("depth both missing n =", sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE), "\n")
