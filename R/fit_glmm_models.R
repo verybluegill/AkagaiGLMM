@@ -51,6 +51,10 @@ pick_first_or_na <- function(x) {
   x[[1]]
 }
 
+to_year_numeric <- function(x) {
+  suppressWarnings(as.integer(as.character(x)))
+}
+
 compute_year_index_table <- function(model_obj, data_obj, optional_pkgs, depth_glmm_sc_value = NULL) {
   model_frame_names <- names(stats::model.frame(model_obj))
 
@@ -100,10 +104,23 @@ compute_year_index_table <- function(model_obj, data_obj, optional_pkgs, depth_g
     pred_grid$vessel <- factor(vessel_levels_used[[1]], levels = levels(data_obj$vessel))
   }
 
+  pred_out <- predict(model_obj, newdata = pred_grid, type = "response", re.form = NA, se.fit = TRUE)
+  fit_vals <- pred_out$fit %||% pred_out
+  se_vals <- pred_out$se.fit %||% rep(NA_real_, length(fit_vals))
+
   pred_grid |>
-    dplyr::mutate(predicted = predict(model_obj, newdata = pred_grid, type = "response", re.form = NA)) |>
+    dplyr::mutate(
+      predicted = fit_vals,
+      lower.CL = predicted - 1.96 * se_vals,
+      upper.CL = predicted + 1.96 * se_vals
+    ) |>
     dplyr::group_by(.data$year) |>
-    dplyr::summarise(response = mean(.data$predicted), .groups = "drop")
+    dplyr::summarise(
+      response = mean(.data$predicted),
+      lower.CL = mean(.data$lower.CL, na.rm = TRUE),
+      upper.CL = mean(.data$upper.CL, na.rm = TRUE),
+      .groups = "drop"
+    )
 }
 
 safe_fit_glmmTMB <- function(model_name, formula_obj, data_obj) {
@@ -180,7 +197,7 @@ extract_re_sd <- function(varcorr_cond, grp_name) {
 plot_year_index <- function(tbl, output_path, title_text, show_ci = FALSE) {
   year_index_col <- get_year_index_col(tbl)
   plot_tbl <- tbl |>
-    dplyr::mutate(year = suppressWarnings(as.integer(as.character(.data$year))))
+    dplyr::mutate(year = to_year_numeric(.data$year))
 
   p <- ggplot2::ggplot(plot_tbl, ggplot2::aes(x = .data$year, y = .data[[year_index_col]], group = 1)) +
     ggplot2::geom_line() +
@@ -224,7 +241,7 @@ make_raw_cpue_table <- function(data_obj, response_col) {
 
 plot_raw_cpue <- function(tbl, output_path, title_text) {
   plot_tbl <- tbl |>
-    dplyr::mutate(year = suppressWarnings(as.integer(.data$year)))
+    dplyr::mutate(year = to_year_numeric(.data$year))
 
   p <- ggplot2::ggplot(plot_tbl, ggplot2::aes(x = .data$year, y = .data$cpue, group = 1)) +
     ggplot2::geom_line() +
@@ -242,6 +259,98 @@ plot_raw_cpue <- function(tbl, output_path, title_text) {
     plot = p,
     width = 10,
     height = 6,
+    dpi = 150
+  )
+
+  cat("saved:", output_path, "\n")
+}
+
+build_standardized_index_table <- function(tbl, response_name) {
+  year_index_col <- get_year_index_col(tbl)
+  estimate_vals <- suppressWarnings(as.numeric(tbl[[year_index_col]]))
+  lower_vals <- if ("lower.CL" %in% names(tbl)) suppressWarnings(as.numeric(tbl[["lower.CL"]])) else rep(NA_real_, nrow(tbl))
+  upper_vals <- if ("upper.CL" %in% names(tbl)) suppressWarnings(as.numeric(tbl[["upper.CL"]])) else rep(NA_real_, nrow(tbl))
+  estimate_mean <- mean(estimate_vals, na.rm = TRUE)
+
+  if (!is.finite(estimate_mean) || estimate_mean <= 0) {
+    stop("Failed to standardize annual index because the reference mean is not positive.")
+  }
+
+  tibble::tibble(
+    response = response_name,
+    year = to_year_numeric(tbl$year),
+    estimate = estimate_vals / estimate_mean,
+    lower.CL = lower_vals / estimate_mean,
+    upper.CL = upper_vals / estimate_mean
+  )
+}
+
+build_raw_vs_index_compare_tbl <- function(raw_tbl, index_tbl) {
+  raw_plot_tbl <- raw_tbl |>
+    dplyr::mutate(
+      panel = "Raw annual CPUE",
+      value = .data$cpue,
+      lower.CL = NA_real_,
+      upper.CL = NA_real_
+    ) |>
+    dplyr::select("response", "year", "panel", "value", "lower.CL", "upper.CL")
+
+  index_plot_tbl <- index_tbl |>
+    dplyr::mutate(
+      panel = "Standardized annual index",
+      value = .data$estimate
+    ) |>
+    dplyr::select("response", "year", "panel", "value", "lower.CL", "upper.CL")
+
+  dplyr::bind_rows(raw_plot_tbl, index_plot_tbl) |>
+    dplyr::mutate(
+      response = factor(.data$response, levels = c("chu", "dai", "toku", "tokudai")),
+      panel = factor(.data$panel, levels = c("Raw annual CPUE", "Standardized annual index"))
+    ) |>
+    dplyr::arrange(.data$panel, .data$response, .data$year)
+}
+
+plot_raw_vs_index_compare <- function(compare_tbl, output_path, title_text) {
+  p <- ggplot2::ggplot(compare_tbl, ggplot2::aes(x = .data$year, y = .data$value, group = 1)) +
+    ggplot2::geom_hline(
+      data = dplyr::filter(compare_tbl, .data$panel == "Standardized annual index"),
+      ggplot2::aes(yintercept = 1),
+      linetype = "dashed",
+      color = "grey40"
+    ) +
+    ggplot2::geom_line() +
+    ggplot2::geom_point(size = 1.8) +
+    ggplot2::geom_errorbar(
+      data = dplyr::filter(compare_tbl, .data$panel == "Standardized annual index" & is.finite(.data$lower.CL) & is.finite(.data$upper.CL)),
+      ggplot2::aes(ymin = .data$lower.CL, ymax = .data$upper.CL),
+      width = 0.15
+    ) +
+    ggplot2::facet_grid(
+      ggplot2::vars(panel),
+      ggplot2::vars(response),
+      scales = "free_y",
+      labeller = ggplot2::labeller(
+        panel = c("Raw annual CPUE" = "Raw annual CPUE", "Standardized annual index" = "Standardized index")
+      )
+    ) +
+    ggplot2::labs(
+      title = title_text,
+      x = "Year",
+      y = NULL
+    ) +
+    ggplot2::scale_x_continuous(breaks = sort(unique(compare_tbl$year))) +
+    ggplot2::scale_y_continuous(name = NULL) +
+    ggplot2::theme_bw() +
+    ggplot2::theme(
+      strip.background = ggplot2::element_rect(fill = "white"),
+      panel.grid.minor = ggplot2::element_blank()
+    )
+
+  ggplot2::ggsave(
+    filename = output_path,
+    plot = p,
+    width = 16,
+    height = 8,
     dpi = 150
   )
 
@@ -347,6 +456,8 @@ analysis_specs <- list(
 model_summary_tbl <- tibble::tibble()
 model_manifest_tbl <- tibble::tibble()
 raw_cpue_manifest_tbl <- tibble::tibble()
+main_raw_cpue_compare_tbl <- tibble::tibble()
+main_index_compare_tbl <- tibble::tibble()
 
 for (spec_i in analysis_specs) {
   dataset_i <- if (identical(spec_i$dataset, "depth")) glmm_dat_depth else glmm_dat_main
@@ -441,6 +552,23 @@ for (spec_i in analysis_specs) {
         raw_cpue_fig_path = raw_cpue_fig_path_i
       )
     )
+
+    if (identical(spec_i$result_group, "main") && identical(spec_i$depth_flag, "depth0") && identical(spec_i$area_vessel_flag, "av0") && spec_i$response %in% c("chu", "dai", "toku", "tokudai")) {
+      main_raw_cpue_compare_tbl <- dplyr::bind_rows(
+        main_raw_cpue_compare_tbl,
+        raw_cpue_table_i |>
+          dplyr::mutate(
+            response = spec_i$response,
+            year = to_year_numeric(.data$year)
+          ) |>
+          dplyr::select("response", "year", "cpue")
+      )
+
+      main_index_compare_tbl <- dplyr::bind_rows(
+        main_index_compare_tbl,
+        build_standardized_index_table(emm_year_tbl_i, spec_i$response)
+      )
+    }
   }
 
   vc_cond_i <- VarCorr(fit_out_i$fit)$cond
@@ -509,6 +637,13 @@ readr::write_csv(model_manifest_tbl, model_manifest_path)
 readr::write_csv(raw_cpue_manifest_tbl, raw_cpue_manifest_path)
 readr::write_csv(model_summary_tbl, variance_summary_path)
 readr::write_csv(model_manifest_tbl, run_status_path)
+
+if (nrow(main_raw_cpue_compare_tbl) > 0 && nrow(main_index_compare_tbl) > 0) {
+  compare_fig_tbl <- build_raw_vs_index_compare_tbl(main_raw_cpue_compare_tbl, main_index_compare_tbl)
+  compare_fig_path <- file.path("output", "figures", "raw_vs_index_main_depth0_av0_panel.png")
+  plot_raw_vs_index_compare(compare_fig_tbl, compare_fig_path, "Raw annual CPUE vs standardized annual index")
+  cat("comparison figure = raw annual CPUE vs standardized annual index (main/depth0/av0)\n")
+}
 
 cat("main results = size-specific depth0 av0 year indices: chu, dai, toku, tokudai\n")
 cat("sub results = total depth0/depth1 and size-specific depth1 year indices\n")
