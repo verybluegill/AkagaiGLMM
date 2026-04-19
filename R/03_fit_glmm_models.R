@@ -1050,7 +1050,6 @@ for (response_name in response_levels) {
         all_compare_results_tbl <- dplyr::bind_rows(all_compare_results_tbl, compare_results_tbl)
 
         cat("response =", response_name, "| best model id = none\n")
-        cat("response =", response_name, "| best model uses depth = none\n")
         cat("response =", response_name, "| final dataset rows = skipped\n")
         cat("response =", response_name, "| saved file paths =", compare_csv_path, "\n")
 
@@ -1162,7 +1161,6 @@ for (response_name in response_levels) {
       all_compare_results_tbl <- dplyr::bind_rows(all_compare_results_tbl, compare_results_tbl)
 
       cat("response =", response_name, "| best model id =", best_model_row$model_id, "\n")
-      cat("response =", response_name, "| best model uses depth =", best_model_row$uses_depth, "\n")
       cat("response =", response_name, "| final dataset rows =", final_dataset_rows, "\n")
       cat(
         "response =", response_name, "| saved file paths =",

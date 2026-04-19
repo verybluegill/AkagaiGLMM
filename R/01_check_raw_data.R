@@ -138,6 +138,30 @@ make_depth_missing_plot <- function(raw_tbl, output_png) {
   cat("saved:", output_png, "\n")
 }
 
+make_year_month_count_plot <- function(raw_tbl, output_png) {
+  heat_tbl <- raw_tbl |>
+    dplyr::filter(!is.na(.data$year), !is.na(.data$month)) |>
+    dplyr::filter(.data$year %in% 2020:2024) |>
+    dplyr::count(.data$year, .data$month, name = "n") |>
+    tidyr::complete(year = 2020:2024, month = 1:12, fill = list(n = 0))
+
+  p <- ggplot2::ggplot(heat_tbl, ggplot2::aes(x = .data$month, y = .data$year, fill = .data$n)) +
+    ggplot2::geom_tile() +
+    ggplot2::geom_text(ggplot2::aes(label = .data$n), size = 3) +
+    ggplot2::scale_x_continuous(breaks = 1:12) +
+    ggplot2::scale_y_continuous(breaks = 2020:2024) +
+    ggplot2::labs(
+      title = "Row count by year and month",
+      x = "Month",
+      y = "Year",
+      fill = "Rows"
+    ) +
+    ggplot2::theme_bw()
+
+  ggplot2::ggsave(output_png, p, width = 9, height = 5.5, dpi = 300)
+  cat("saved:", output_png, "\n")
+}
+
 raw_dat <- readxl::read_excel(excel_path, sheet = "sheet1")
 
 vessel_col <- names(raw_dat)[[1]]
@@ -316,6 +340,7 @@ make_date_year_check_plot(raw_tbl, file.path("output", "check_figures", "date_ye
 make_depth_histogram_plot(raw_tbl, file.path("output", "check_figures", "depth_histogram_raw.png"))
 make_depth_by_year_plot(raw_tbl, file.path("output", "check_figures", "depth_by_year_raw.png"))
 make_depth_missing_plot(raw_tbl, file.path("output", "check_figures", "depth_missing_by_year_area.png"))
+make_year_month_count_plot(raw_tbl, file.path("output", "check_figures", "year_month_count_heatmap.png"))
 
 cat("used date rule = ymd_reiwa\n")
 cat("rows total =", nrow(raw_tbl), "\n")
