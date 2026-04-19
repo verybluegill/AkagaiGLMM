@@ -181,72 +181,9 @@ catch_shosho_col <- names(raw_dat)[[22]]
 raw_tbl <- tibble::as_tibble(raw_dat) |>
   dplyr::mutate(
     row_id = dplyr::row_number(),
-    `年（令和）` = suppressWarnings(as.integer(.data[[year_col]])),
-    month = suppressWarnings(as.integer(.data[[month_col]])),
-    day = suppressWarnings(as.integer(.data[[day_col]])),
-    year_raw = 2018L + `年（令和）`,
-    ymd_reiwa = suppressWarnings(lubridate::ymd(sprintf("%04d-%02d-%02d", .data$year_raw, .data$month, .data$day))),
-    flag_year_out_of_scope = is.na(.data$year_raw) | !(.data$year_raw %in% 2020:2024),
-    ymd_reiwa = dplyr::if_else(.data$flag_year_out_of_scope, as.Date(NA), .data$ymd_reiwa),
-    year = dplyr::if_else(.data$flag_year_out_of_scope, NA_integer_, .data$year_raw),
-    vessel = as.character(.data[[vessel_col]]),
-    area_start = as.character(.data[[area_start_col]]),
-    area_end = as.character(.data[[area_end_col]]),
-    area = dplyr::if_else(!is.na(.data$area_start) & .data$area_start != "", .data$area_start, .data$area_end),
-    effort_hours = parse_effort_hours(.data[[effort_col]]),
-    flag_effort_missing = is.na(.data$effort_hours),
-    flag_effort_nonpositive = !is.na(.data$effort_hours) & .data$effort_hours <= 0,
-    depth_raw_1 = suppressWarnings(as.numeric(.data[[depth_1_col]])),
-    depth_raw_2 = suppressWarnings(as.numeric(.data[[depth_2_col]])),
-    flag_depth_both_missing = is.na(.data$depth_raw_1) & is.na(.data$depth_raw_2),
-    flag_depth_only_one = xor(is.na(.data$depth_raw_1), is.na(.data$depth_raw_2)),
-    flag_depth_both_present = !is.na(.data$depth_raw_1) & !is.na(.data$depth_raw_2),
-    flag_depth_both_le_50 = .data$flag_depth_both_present & .data$depth_raw_1 <= 70 & .data$depth_raw_2 <= 70,
-    flag_depth_one_le_50_one_gt_50 = .data$flag_depth_both_present & ((.data$depth_raw_1 <= 70 & .data$depth_raw_2 > 70) | (.data$depth_raw_1 > 70 & .data$depth_raw_2 <= 70)),
-    flag_depth_both_gt_50 = .data$flag_depth_both_present & .data$depth_raw_1 > 70 & .data$depth_raw_2 > 70,
-    depth_use_raw_rule = make_depth_use(.data$depth_raw_1, .data$depth_raw_2),
-    catch_total = suppressWarnings(as.numeric(.data[[catch_total_col]])),
-    catch_medium = suppressWarnings(as.numeric(.data[[catch_medium_col]])),
-    catch_dai = suppressWarnings(as.numeric(.data[[catch_dai_col]])),
-    catch_toku = suppressWarnings(as.numeric(.data[[catch_toku_col]])),
-    catch_tokudai = suppressWarnings(as.numeric(.data[[catch_tokudai_col]])),
-    cpue_total_raw = dplyr::if_else(!is.na(.data$effort_hours) & .data$effort_hours > 0, .data$catch_total / .data$effort_hours, NA_real_)
-  ) |>
-  dplyr::select(
-    "row_id",
-    "年（令和）",
-    "month",
-    "day",
-    "ymd_reiwa",
-    "year",
-    "flag_year_out_of_scope",
-    "vessel",
-    "area",
-    "effort_hours",
-    "flag_effort_missing",
-    "flag_effort_nonpositive",
-    "depth_raw_1",
-    "depth_raw_2",
-    "flag_depth_both_missing",
-    "flag_depth_only_one",
-    "flag_depth_both_present",
-    "flag_depth_both_le_50",
-    "flag_depth_one_le_50_one_gt_50",
-    "flag_depth_both_gt_50",
-    "depth_use_raw_rule",
-    "catch_total",
-    "catch_medium",
-    "catch_dai",
-    "catch_toku",
-    "catch_tokudai",
-    "cpue_total_raw"
-  )
-
-raw_tbl <- raw_tbl |>
-  dplyr::mutate(
-    year_reiwa_raw = suppressWarnings(as.integer(parse_numeric_trim(.env$raw_dat[[year_col]]))),
-    month = suppressWarnings(as.integer(parse_numeric_trim(.env$raw_dat[[month_col]]))),
-    day = suppressWarnings(as.integer(parse_numeric_trim(.env$raw_dat[[day_col]]))),
+    year_reiwa_raw = suppressWarnings(as.integer(parse_numeric_trim(.data[[year_col]]))),
+    month = suppressWarnings(as.integer(parse_numeric_trim(.data[[month_col]]))),
+    day = suppressWarnings(as.integer(parse_numeric_trim(.data[[day_col]]))),
     month = dplyr::if_else(!is.na(.data$month) & .data$month %in% 1:12, .data$month, NA_integer_),
     day = dplyr::if_else(!is.na(.data$day) & .data$day %in% 1:31, .data$day, NA_integer_),
     year_raw = 2018L + .data$year_reiwa_raw,
@@ -256,21 +193,39 @@ raw_tbl <- raw_tbl |>
     flag_year_out_of_scope = is.na(.data$year_raw) | !(.data$year_raw %in% 2020:2024),
     ymd_reiwa = dplyr::if_else(.data$flag_year_out_of_scope, as.Date(NA), .data$ymd_reiwa),
     year = dplyr::if_else(.data$flag_year_out_of_scope, NA_integer_, .data$year_raw),
-    vessel_raw = parse_numeric_trim(.env$raw_dat[[vessel_col]]),
+    vessel_raw = parse_numeric_trim(.data[[vessel_col]]),
     vessel = dplyr::if_else(!is.na(.data$vessel_raw) & .data$vessel_raw %in% 1:5, as.integer(.data$vessel_raw), NA_integer_),
-    area_start = parse_numeric_trim(.env$raw_dat[[area_start_col]]),
-    area_end = parse_numeric_trim(.env$raw_dat[[area_end_col]]),
+    area_start = parse_numeric_trim(.data[[area_start_col]]),
+    area_end = parse_numeric_trim(.data[[area_end_col]]),
     area = dplyr::case_when(
       !is.na(.data$area_start) & as.integer(.data$area_start) %in% valid_area_codes ~ as.integer(.data$area_start),
       (is.na(.data$area_start) | !(as.integer(.data$area_start) %in% valid_area_codes)) &
         !is.na(.data$area_end) & as.integer(.data$area_end) %in% valid_area_codes ~ as.integer(.data$area_end),
       TRUE ~ NA_integer_
     ),
-    speed_kt = parse_numeric_trim(.env$raw_dat[[speed_col]]),
-    catch_ware = suppressWarnings(as.numeric(.env$raw_dat[[catch_ware_col]])),
-    catch_sho = suppressWarnings(as.numeric(.env$raw_dat[[catch_sho_col]])),
-    catch_shosho = suppressWarnings(as.numeric(.env$raw_dat[[catch_shosho_col]])),
-    count_total_raw = suppressWarnings(as.numeric(.env$raw_dat[[catch_total_col]]))
+    effort_hours = parse_effort_hours(.data[[effort_col]]),
+    speed_kt = parse_numeric_trim(.data[[speed_col]]),
+    flag_effort_missing = is.na(.data$effort_hours),
+    flag_effort_nonpositive = !is.na(.data$effort_hours) & .data$effort_hours <= 0,
+    depth_raw_1 = suppressWarnings(as.numeric(.data[[depth_1_col]])),
+    depth_raw_2 = suppressWarnings(as.numeric(.data[[depth_2_col]])),
+    flag_depth_both_missing = is.na(.data$depth_raw_1) & is.na(.data$depth_raw_2),
+    flag_depth_only_one = xor(is.na(.data$depth_raw_1), is.na(.data$depth_raw_2)),
+    flag_depth_both_present = !is.na(.data$depth_raw_1) & !is.na(.data$depth_raw_2),
+    flag_depth_both_le_70 = .data$flag_depth_both_present & .data$depth_raw_1 <= 70 & .data$depth_raw_2 <= 70,
+    flag_depth_one_le_70_one_gt_70 = .data$flag_depth_both_present & ((.data$depth_raw_1 <= 70 & .data$depth_raw_2 > 70) | (.data$depth_raw_1 > 70 & .data$depth_raw_2 <= 70)),
+    flag_depth_both_gt_70 = .data$flag_depth_both_present & .data$depth_raw_1 > 70 & .data$depth_raw_2 > 70,
+    depth_use_raw_rule = make_depth_use(.data$depth_raw_1, .data$depth_raw_2),
+    catch_total = suppressWarnings(as.numeric(.data[[catch_total_col]])),
+    catch_medium = suppressWarnings(as.numeric(.data[[catch_medium_col]])),
+    catch_dai = suppressWarnings(as.numeric(.data[[catch_dai_col]])),
+    catch_toku = suppressWarnings(as.numeric(.data[[catch_toku_col]])),
+    catch_tokudai = suppressWarnings(as.numeric(.data[[catch_tokudai_col]])),
+    catch_ware = suppressWarnings(as.numeric(.data[[catch_ware_col]])),
+    catch_sho = suppressWarnings(as.numeric(.data[[catch_sho_col]])),
+    catch_shosho = suppressWarnings(as.numeric(.data[[catch_shosho_col]])),
+    count_total_raw = suppressWarnings(as.numeric(.data[[catch_total_col]])),
+    cpue_total_raw = dplyr::if_else(!is.na(.data$effort_hours) & .data$effort_hours > 0, .data$catch_total / .data$effort_hours, NA_real_)
   ) |>
   dplyr::select(
     "row_id",
@@ -294,9 +249,9 @@ raw_tbl <- raw_tbl |>
     "flag_depth_both_missing",
     "flag_depth_only_one",
     "flag_depth_both_present",
-    "flag_depth_both_le_50",
-    "flag_depth_one_le_50_one_gt_50",
-    "flag_depth_both_gt_50",
+    "flag_depth_both_le_70",
+    "flag_depth_one_le_70_one_gt_70",
+    "flag_depth_both_gt_70",
     "depth_use_raw_rule",
     "catch_total",
     "catch_medium",
@@ -329,9 +284,9 @@ depth_rule_check_summary <- tibble::tibble(
     sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE),
     sum(raw_tbl$flag_depth_only_one, na.rm = TRUE),
     sum(raw_tbl$flag_depth_both_present, na.rm = TRUE),
-    sum(raw_tbl$flag_depth_both_le_50, na.rm = TRUE),
-    sum(raw_tbl$flag_depth_one_le_50_one_gt_50, na.rm = TRUE),
-    sum(raw_tbl$flag_depth_both_gt_50, na.rm = TRUE),
+    sum(raw_tbl$flag_depth_both_le_70, na.rm = TRUE),
+    sum(raw_tbl$flag_depth_one_le_70_one_gt_70, na.rm = TRUE),
+    sum(raw_tbl$flag_depth_both_gt_70, na.rm = TRUE),
     sum(is.na(raw_tbl$depth_use_raw_rule), na.rm = TRUE)
   )
 )
@@ -380,11 +335,11 @@ model_structure_candidates <- tibble::tibble(
   )
 )
 
-depth_both_gt50_rows <- raw_tbl |>
-  dplyr::filter(.data$flag_depth_both_gt_50)
+depth_both_gt70_rows <- raw_tbl |>
+  dplyr::filter(.data$flag_depth_both_gt_70)
 
-depth_one_le50_one_gt50_rows <- raw_tbl |>
-  dplyr::filter(.data$flag_depth_one_le_50_one_gt_50)
+depth_one_le70_one_gt70_rows <- raw_tbl |>
+  dplyr::filter(.data$flag_depth_one_le_70_one_gt_70)
 
 extreme_cpue_cutoff <- stats::quantile(raw_tbl$cpue_total_raw, probs = 0.99, na.rm = TRUE, names = FALSE)
 if (!is.finite(extreme_cpue_cutoff)) {
@@ -400,8 +355,8 @@ save_check_csv(depth_rule_check_summary, file.path("output", "check_tables", "de
 save_check_csv(effort_check_summary, file.path("output", "check_tables", "effort_check_summary.csv"))
 save_check_csv(data_cleaning_candidates, file.path("output", "check_tables", "data_cleaning_candidates.csv"))
 save_check_csv(model_structure_candidates, file.path("output", "check_tables", "model_structure_candidates.csv"))
-save_check_csv(depth_both_gt50_rows, file.path("output", "check_tables", "depth_both_gt70_rows.csv"))
-save_check_csv(depth_one_le50_one_gt50_rows, file.path("output", "check_tables", "depth_one_le70_one_gt70_rows.csv"))
+save_check_csv(depth_both_gt70_rows, file.path("output", "check_tables", "depth_both_gt70_rows.csv"))
+save_check_csv(depth_one_le70_one_gt70_rows, file.path("output", "check_tables", "depth_one_le70_one_gt70_rows.csv"))
 save_check_csv(extreme_cpue_candidate_rows, file.path("output", "check_tables", "extreme_cpue_candidate_rows.csv"))
 
 make_date_year_check_plot(raw_tbl, file.path("output", "check_figures", "date_year_check.png"))
@@ -421,6 +376,6 @@ cat("effort missing n =", sum(raw_tbl$flag_effort_missing, na.rm = TRUE), "\n")
 cat("effort nonpositive n =", sum(raw_tbl$flag_effort_nonpositive, na.rm = TRUE), "\n")
 cat("depth both missing n =", sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE), "\n")
 cat("depth only one n =", sum(raw_tbl$flag_depth_only_one, na.rm = TRUE), "\n")
-cat("depth both <= 70 n =", sum(raw_tbl$flag_depth_both_le_50, na.rm = TRUE), "\n")
-cat("depth one<=70 one>70 n =", sum(raw_tbl$flag_depth_one_le_50_one_gt_50, na.rm = TRUE), "\n")
-cat("depth both > 70 n =", sum(raw_tbl$flag_depth_both_gt_50, na.rm = TRUE), "\n")
+cat("depth both <= 70 n =", sum(raw_tbl$flag_depth_both_le_70, na.rm = TRUE), "\n")
+cat("depth one<=70 one>70 n =", sum(raw_tbl$flag_depth_one_le_70_one_gt_70, na.rm = TRUE), "\n")
+cat("depth both > 70 n =", sum(raw_tbl$flag_depth_both_gt_70, na.rm = TRUE), "\n")
