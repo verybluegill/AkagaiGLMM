@@ -231,10 +231,9 @@ build_polygon_geometry <- function() {
     sf::st_as_sf()
 }
 
-plot_area_map_single <- function(plot_tbl, size_id, output_png) {
-  size_label <- dplyr::recode(size_id, medium = "Medium", dai = "Large", toku = "Special", tokudai = "Extra large")
+plot_area_map_single <- function(plot_tbl, size_label, output_png) {
   map_tbl <- plot_tbl |>
-    dplyr::filter(.data$size_id == size_id, .data$year %in% 2021:2024)
+    dplyr::filter(!is.na(.data$year), .data$year %in% 2021:2024)
 
   fill_limit <- max(abs(map_tbl$diff_log), na.rm = TRUE)
   if (!is.finite(fill_limit) || fill_limit <= 0) {
@@ -245,7 +244,8 @@ plot_area_map_single <- function(plot_tbl, size_id, output_png) {
 
   if (!is.null(poly_sf)) {
     map_sf <- poly_sf |>
-      dplyr::left_join(map_tbl, by = "area")
+      dplyr::left_join(map_tbl, by = "area") |>
+      dplyr::filter(!is.na(.data$year))
 
     p <- ggplot2::ggplot(map_sf) +
       ggplot2::geom_sf(ggplot2::aes(fill = scales::squish(.data$diff_log, c(-fill_limit, fill_limit))), color = "grey55", linewidth = 0.25) +
@@ -351,23 +351,58 @@ area_cpue_tbl <- cleaned_long_tbl |>
   ) |>
   dplyr::ungroup()
 
+area_cpue_medium_tbl <- area_cpue_tbl |>
+  dplyr::filter(.data$size_id == "medium")
+area_cpue_dai_tbl <- area_cpue_tbl |>
+  dplyr::filter(.data$size_id == "dai")
+area_cpue_toku_tbl <- area_cpue_tbl |>
+  dplyr::filter(.data$size_id == "toku")
+area_cpue_tokudai_tbl <- area_cpue_tbl |>
+  dplyr::filter(.data$size_id == "tokudai")
+
 save_check_csv(cleaned_tbl, file.path("output", "check_tables", "cleaned_data.csv"))
 save_check_csv(cleaned_summary, file.path("output", "check_tables", "cleaned_data_summary.csv"))
 save_check_csv(annual_total_tbl, file.path("output", "check_tables", "year_count_effort_cpue_total.csv"))
 save_check_csv(annual_by_size_tbl, file.path("output", "check_tables", "year_count_effort_cpue_by_size.csv"))
+save_check_csv(area_cpue_medium_tbl, file.path("output", "check_tables", "area_cpue_medium_tbl.csv"))
+save_check_csv(area_cpue_dai_tbl, file.path("output", "check_tables", "area_cpue_dai_tbl.csv"))
+save_check_csv(area_cpue_toku_tbl, file.path("output", "check_tables", "area_cpue_toku_tbl.csv"))
+save_check_csv(area_cpue_tokudai_tbl, file.path("output", "check_tables", "area_cpue_tokudai_tbl.csv"))
 
 plot_annual_cpue_total(annual_total_tbl, file.path("output", "check_figures", "annual_cpue_total.png"))
 plot_annual_cpue_by_size(annual_by_size_tbl, file.path("output", "check_figures", "annual_cpue_by_size.png"))
 plot_depth_cpue_pdf_style(cleaned_long_tbl, file.path("output", "check_figures", "depth_cpue_pdf_style.png"))
-plot_area_map_single(area_cpue_tbl, "medium", file.path("output", "check_figures", "area_cpue_map_medium.png"))
-plot_area_map_single(area_cpue_tbl, "dai", file.path("output", "check_figures", "area_cpue_map_dai.png"))
-plot_area_map_single(area_cpue_tbl, "toku", file.path("output", "check_figures", "area_cpue_map_toku.png"))
-plot_area_map_single(area_cpue_tbl, "tokudai", file.path("output", "check_figures", "area_cpue_map_tokudai.png"))
+plot_area_map_single(area_cpue_medium_tbl, "Medium", file.path("output", "check_figures", "area_cpue_map_medium.png"))
+plot_area_map_single(area_cpue_dai_tbl, "Large", file.path("output", "check_figures", "area_cpue_map_dai.png"))
+plot_area_map_single(area_cpue_toku_tbl, "Special", file.path("output", "check_figures", "area_cpue_map_toku.png"))
+plot_area_map_single(area_cpue_tokudai_tbl, "Extra large", file.path("output", "check_figures", "area_cpue_map_tokudai.png"))
 
 cat("cleaned rows =", nrow(cleaned_tbl), "\n")
 cat("cleaned rows with depth_use non-missing =", sum(!is.na(cleaned_tbl$depth_use)), "\n")
 cat("annual CPUE summary =\n")
 print(annual_total_tbl)
+cat("area map size = Medium | nrow =", nrow(area_cpue_medium_tbl), "\n")
+cat("area map size = Large | nrow =", nrow(area_cpue_dai_tbl), "\n")
+cat("area map size = Special | nrow =", nrow(area_cpue_toku_tbl), "\n")
+cat("area map size = Extra large | nrow =", nrow(area_cpue_tokudai_tbl), "\n")
+identical_medium_dai <- identical(area_cpue_medium_tbl, area_cpue_dai_tbl)
+cat("identical(area_cpue_medium_tbl, area_cpue_dai_tbl) =", identical_medium_dai, "\n")
+if (identical_medium_dai) warning("area_cpue_medium_tbl and area_cpue_dai_tbl are identical")
+identical_medium_toku <- identical(area_cpue_medium_tbl, area_cpue_toku_tbl)
+cat("identical(area_cpue_medium_tbl, area_cpue_toku_tbl) =", identical_medium_toku, "\n")
+if (identical_medium_toku) warning("area_cpue_medium_tbl and area_cpue_toku_tbl are identical")
+identical_medium_tokudai <- identical(area_cpue_medium_tbl, area_cpue_tokudai_tbl)
+cat("identical(area_cpue_medium_tbl, area_cpue_tokudai_tbl) =", identical_medium_tokudai, "\n")
+if (identical_medium_tokudai) warning("area_cpue_medium_tbl and area_cpue_tokudai_tbl are identical")
+identical_dai_toku <- identical(area_cpue_dai_tbl, area_cpue_toku_tbl)
+cat("identical(area_cpue_dai_tbl, area_cpue_toku_tbl) =", identical_dai_toku, "\n")
+if (identical_dai_toku) warning("area_cpue_dai_tbl and area_cpue_toku_tbl are identical")
+identical_dai_tokudai <- identical(area_cpue_dai_tbl, area_cpue_tokudai_tbl)
+cat("identical(area_cpue_dai_tbl, area_cpue_tokudai_tbl) =", identical_dai_tokudai, "\n")
+if (identical_dai_tokudai) warning("area_cpue_dai_tbl and area_cpue_tokudai_tbl are identical")
+identical_toku_tokudai <- identical(area_cpue_toku_tbl, area_cpue_tokudai_tbl)
+cat("identical(area_cpue_toku_tbl, area_cpue_tokudai_tbl) =", identical_toku_tokudai, "\n")
+if (identical_toku_tokudai) warning("area_cpue_toku_tbl and area_cpue_tokudai_tbl are identical")
 cat("2023 rank in count =", compute_year_rank(annual_total_tbl, "total_count"), "\n")
 cat("2023 rank in effort =", compute_year_rank(annual_total_tbl, "total_effort_hours"), "\n")
 cat("2023 rank in CPUE =", compute_year_rank(annual_total_tbl, "cpue_ratio"), "\n")
