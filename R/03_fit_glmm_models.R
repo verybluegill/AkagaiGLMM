@@ -1,25 +1,55 @@
 # =========================================
 # fit_glmm_models.R
-# 本流 Step 3
+# Step 3
 # 入力: data_processed/akagai_glmm_input.csv
-# 出力: 主解析 size 別 GLMM、sub total/depth、感度分析のモデル・表・図
+# 出力: AIC比較、best model、年指数、図、診断
 # =========================================
 
 source(file.path("R", "00_load_packages.R"))
 
 optional_pkgs <- load_project_packages(
-  required_pkgs = c("dplyr", "ggplot2", "glmmTMB", "purrr", "readr", "tibble", "tidyr"),
-  optional_pkgs = c("emmeans", "DHARMa")
+  required_pkgs = c("dplyr", "ggplot2", "glmmTMB", "readr", "tibble", "tidyr", "purrr"),
+  optional_pkgs = c("DHARMa")
 )
 
 ensure_project_dirs()
 
 input_path <- file.path("data_processed", "akagai_glmm_input.csv")
-model_summary_path <- file.path("output", "tables", "glmm_model_summary.csv")
-model_manifest_path <- file.path("output", "tables", "glmm_model_manifest.csv")
-raw_cpue_manifest_path <- file.path("output", "tables", "raw_cpue_manifest.csv")
-variance_summary_path <- file.path("output", "tables", "glmm_by_size_variance_summary.csv")
-run_status_path <- file.path("output", "tables", "glmm_by_size_run_status.csv")
+response_levels <- c("chu", "dai", "toku", "tokudai", "count_total")
+
+path_depth_definition <- file.path("output", "tables", "depth_category_definition.csv")
+path_depth_summary <- file.path("output", "tables", "depth_category_summary.csv")
+path_aic_compare_all <- file.path("output", "tables", "aic_compare_all.csv")
+path_best_model_table <- file.path("output", "tables", "best_model_table.csv")
+path_best_model_summary <- file.path("output", "tables", "best_model_summary.csv")
+path_results_rds <- file.path("output", "models", "glmm_workflow_results.rds")
+
+`%||%` <- function(x, y) {
+  if (length(x) == 0 || is.null(x)) {
+    return(y)
+  }
+
+  x
+}
+
+combine_messages <- function(...) {
+  vals <- unlist(list(...), use.names = FALSE)
+  vals <- vals[!is.na(vals) & nzchar(vals)]
+
+  if (length(vals) == 0) {
+    return("")
+  }
+
+  paste(unique(vals), collapse = " | ")
+}
+
+to_year_numeric <- function(x) {
+  suppressWarnings(as.integer(as.character(x)))
+}
+
+get_observed_levels <- function(x) {
+  sort(unique(as.character(x[!is.na(x)])))
+}
 
 get_year_index_col <- function(tbl) {
   matched <- intersect(c("response", "rate", "prob", "emmean"), names(tbl))
@@ -31,100 +61,23 @@ get_year_index_col <- function(tbl) {
   matched[[1]]
 }
 
-`%||%` <- function(x, y) {
-  if (length(x) == 0 || is.null(x)) {
-    return(y)
+extract_re_sd <- function(varcorr_cond, grp_name) {
+  if (is.null(varcorr_cond[[grp_name]])) {
+    return(c(variance = NA_real_, sd = NA_real_))
   }
 
-  x
-}
+  grp_mat <- varcorr_cond[[grp_name]]
+  grp_sd <- attr(grp_mat, "stddev")
 
-get_observed_levels <- function(x) {
-  sort(unique(as.character(x[!is.na(x)])))
-}
-
-pick_first_or_na <- function(x) {
-  if (length(x) == 0) {
-    return(NA_real_)
-  }
-
-  x[[1]]
-}
-
-to_year_numeric <- function(x) {
-  suppressWarnings(as.integer(as.character(x)))
-}
-
-compute_year_index_table <- function(model_obj, data_obj, optional_pkgs, depth_glmm_sc_value = NULL) {
-  model_frame_names <- names(stats::model.frame(model_obj))
-
-  if (isTRUE(optional_pkgs[["emmeans"]])) {
-    at_list <- list(effort_glmm = 1)
-
-    if ("depth_glmm_sc" %in% model_frame_names) {
-      at_list$depth_glmm_sc <- depth_glmm_sc_value %||% 0
-    }
-
-    if ("area" %in% model_frame_names) {
-      at_list$area <- get_observed_levels(data_obj$area)[[1]]
-    }
-
-    if ("vessel" %in% model_frame_names) {
-      at_list$vessel <- get_observed_levels(data_obj$vessel)[[1]]
-    }
-
-    return(as.data.frame(emmeans::emmeans(
-      model_obj,
-      specs = ~ year,
-      at = at_list,
-      type = "response"
-    )))
-  }
-
-  year_levels_used <- get_observed_levels(data_obj$year)
-  month_levels_used <- get_observed_levels(data_obj$month)
-
-  pred_grid <- tidyr::expand_grid(
-    year = factor(year_levels_used, levels = levels(data_obj$year)),
-    month = factor(month_levels_used, levels = levels(data_obj$month)),
-    effort_glmm = 1
+  c(
+    variance = suppressWarnings(as.numeric(grp_mat[1, 1])),
+    sd = suppressWarnings(as.numeric(grp_sd[[1]]))
   )
-
-  if ("depth_glmm_sc" %in% model_frame_names) {
-    pred_grid$depth_glmm_sc <- depth_glmm_sc_value %||% 0
-  }
-
-  if ("area" %in% model_frame_names) {
-    area_levels_used <- get_observed_levels(data_obj$area)
-    pred_grid$area <- factor(area_levels_used[[1]], levels = levels(data_obj$area))
-  }
-
-  if ("vessel" %in% model_frame_names) {
-    vessel_levels_used <- get_observed_levels(data_obj$vessel)
-    pred_grid$vessel <- factor(vessel_levels_used[[1]], levels = levels(data_obj$vessel))
-  }
-
-  pred_out <- predict(model_obj, newdata = pred_grid, type = "response", re.form = NA, se.fit = TRUE)
-  fit_vals <- pred_out$fit %||% pred_out
-  se_vals <- pred_out$se.fit %||% rep(NA_real_, length(fit_vals))
-
-  pred_grid |>
-    dplyr::mutate(
-      predicted = fit_vals,
-      lower.CL = predicted - 1.96 * se_vals,
-      upper.CL = predicted + 1.96 * se_vals
-    ) |>
-    dplyr::group_by(.data$year) |>
-    dplyr::summarise(
-      response = mean(.data$predicted),
-      lower.CL = mean(.data$lower.CL, na.rm = TRUE),
-      upper.CL = mean(.data$upper.CL, na.rm = TRUE),
-      .groups = "drop"
-    )
 }
 
-safe_fit_glmmTMB <- function(model_name, formula_obj, data_obj) {
+safe_fit_glmmTMB <- function(model_id, formula_obj, data_obj) {
   warning_messages <- character(0)
+  error_message <- NA_character_
 
   fit_obj <- tryCatch(
     withCallingHandlers(
@@ -139,133 +92,530 @@ safe_fit_glmmTMB <- function(model_name, formula_obj, data_obj) {
       }
     ),
     error = function(e) {
+      error_message <<- conditionMessage(e)
       NULL
     }
   )
 
   list(
-    model_name = model_name,
+    model_id = model_id,
     fit = fit_obj,
-    warning_message = paste(unique(warning_messages), collapse = " | ")
+    warning_message = paste(unique(warning_messages), collapse = " | "),
+    error_message = error_message
   )
 }
 
-extract_model_metrics <- function(model_name, area_type, depth_degree, fit_obj, warning_message = "") {
+run_dharma_dispersion <- function(fit_obj, optional_pkgs, output_plot_path = NULL) {
+  if (!isTRUE(optional_pkgs[["DHARMa"]]) || is.null(fit_obj)) {
+    return(list(
+      status = "not_run",
+      dispersion = NA_real_,
+      dispersion_p = NA_real_,
+      warning_message = "DHARMa is not available."
+    ))
+  }
+
+  simulated_obj <- tryCatch(
+    DHARMa::simulateResiduals(fit_obj, plot = FALSE),
+    error = function(e) e
+  )
+
+  if (inherits(simulated_obj, "error")) {
+    return(list(
+      status = "failed",
+      dispersion = NA_real_,
+      dispersion_p = NA_real_,
+      warning_message = conditionMessage(simulated_obj)
+    ))
+  }
+
+  if (!is.null(output_plot_path)) {
+    tryCatch(
+      {
+        grDevices::png(filename = output_plot_path, width = 1400, height = 1000, res = 150)
+        on.exit(grDevices::dev.off(), add = TRUE)
+        plot(simulated_obj)
+      },
+      error = function(e) NULL
+    )
+  }
+
+  dispersion_out <- tryCatch(
+    DHARMa::testDispersion(simulated_obj),
+    error = function(e) e
+  )
+
+  if (inherits(dispersion_out, "error")) {
+    return(list(
+      status = "failed",
+      dispersion = NA_real_,
+      dispersion_p = NA_real_,
+      warning_message = conditionMessage(dispersion_out)
+    ))
+  }
+
+  list(
+    status = "completed",
+    dispersion = suppressWarnings(as.numeric(dispersion_out$statistic[[1]] %||% NA_real_)),
+    dispersion_p = suppressWarnings(as.numeric(dispersion_out$p.value %||% NA_real_)),
+    warning_message = ""
+  )
+}
+
+build_depth_boundary_candidates <- function(depth_values) {
+  unique_depth <- sort(unique(depth_values))
+
+  if (length(unique_depth) < 3) {
+    stop("depth_glmm must have at least 3 unique values to create 3 categories.")
+  }
+
+  lower_candidates <- unique_depth[seq_len(length(unique_depth) - 2)]
+  upper_candidates <- unique_depth[seq(2, length(unique_depth) - 1)]
+
+  tidyr::expand_grid(c1 = lower_candidates, c2 = upper_candidates) |>
+    dplyr::filter(.data$c1 < .data$c2)
+}
+
+summarise_depth_split <- function(depth_values, c1, c2) {
+  depth_cat_chr <- dplyr::case_when(
+    depth_values <= c1 ~ "shallow",
+    depth_values <= c2 ~ "mid",
+    depth_values > c2 ~ "deep",
+    TRUE ~ NA_character_
+  )
+
+  count_tbl <- tibble::tibble(depth_cat = depth_cat_chr, depth_glmm = depth_values) |>
+    dplyr::group_by(.data$depth_cat) |>
+    dplyr::summarise(
+      n = dplyr::n(),
+      min_depth = min(.data$depth_glmm, na.rm = TRUE),
+      max_depth = max(.data$depth_glmm, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    dplyr::right_join(
+      tibble::tibble(depth_cat = c("shallow", "mid", "deep")),
+      by = "depth_cat"
+    ) |>
+    dplyr::mutate(
+      n = dplyr::coalesce(.data$n, 0L),
+      min_depth = .data$min_depth,
+      max_depth = .data$max_depth
+    )
+
+  n_total <- length(depth_values)
+  target_n <- n_total / 3
+
+  count_tbl |>
+    dplyr::mutate(
+      c1 = c1,
+      c2 = c2,
+      score = sum((.data$n - target_n) ^ 2),
+      min_prop = min(.data$n / n_total)
+    )
+}
+
+determine_depth_boundaries <- function(glmm_input) {
+  depth_source_tbl <- glmm_input |>
+    dplyr::filter(.data$flag_use_for_main_glmm) |>
+    dplyr::filter(
+      !is.na(.data$year),
+      !is.na(.data$month),
+      !is.na(.data$area),
+      !is.na(.data$vessel),
+      !is.na(.data$effort_glmm),
+      !is.na(.data$depth_glmm),
+      is.finite(.data$effort_glmm),
+      is.finite(.data$depth_glmm),
+      .data$effort_glmm > 0
+    ) |>
+    dplyr::transmute(depth_glmm = .data$depth_glmm)
+
+  if (nrow(depth_source_tbl) == 0) {
+    stop("No rows available for common depth boundary determination.")
+  }
+
+  depth_values <- depth_source_tbl$depth_glmm
+  quantile_vals <- stats::quantile(depth_values, probs = c(1 / 3, 2 / 3), na.rm = TRUE, names = FALSE, type = 7)
+  quantile_candidate <- summarise_depth_split(depth_values, quantile_vals[[1]], quantile_vals[[2]])
+
+  use_search <- !isTRUE(quantile_vals[[1]] < quantile_vals[[2]]) || any(quantile_candidate$n == 0) || isTRUE(min(quantile_candidate$n) < 0.10 * length(depth_values))
+
+  if (isTRUE(use_search)) {
+    boundary_tbl <- build_depth_boundary_candidates(depth_values)
+
+    candidate_tbl <- purrr::pmap_dfr(
+      list(boundary_tbl$c1, boundary_tbl$c2),
+      function(c1, c2) {
+        summarise_depth_split(depth_values, c1, c2)
+      }
+    ) |>
+      dplyr::distinct(.data$depth_cat, .data$n, .data$min_depth, .data$max_depth, .data$c1, .data$c2, .data$score, .data$min_prop)
+
+    best_boundary_tbl <- candidate_tbl |>
+      dplyr::group_by(.data$c1, .data$c2, .data$score, .data$min_prop) |>
+      dplyr::summarise(.groups = "drop") |>
+      dplyr::arrange(.data$score, dplyr::desc(.data$min_prop), .data$c1, .data$c2)
+
+    selected_c1 <- best_boundary_tbl$c1[[1]]
+    selected_c2 <- best_boundary_tbl$c2[[1]]
+    selected_summary_tbl <- candidate_tbl |>
+      dplyr::filter(.data$c1 == selected_c1, .data$c2 == selected_c2) |>
+      dplyr::select("depth_cat", "n", "min_depth", "max_depth")
+  } else {
+    selected_c1 <- quantile_vals[[1]]
+    selected_c2 <- quantile_vals[[2]]
+    selected_summary_tbl <- quantile_candidate |>
+      dplyr::select("depth_cat", "n", "min_depth", "max_depth")
+  }
+
+  reference_level <- if ("mid" %in% selected_summary_tbl$depth_cat[selected_summary_tbl$n > 0]) {
+    "mid"
+  } else {
+    selected_summary_tbl$depth_cat[selected_summary_tbl$n > 0][[1]]
+  }
+
+  list(
+    c1 = selected_c1,
+    c2 = selected_c2,
+    reference_level = reference_level,
+    definition_tbl = tibble::tibble(
+      depth_cat = c("shallow", "mid", "deep"),
+      lower_bound = c(-Inf, selected_c1, selected_c2),
+      upper_bound = c(selected_c1, selected_c2, Inf),
+      lower_bound_closed = c(TRUE, FALSE, FALSE),
+      upper_bound_closed = c(TRUE, TRUE, FALSE),
+      reference_level = c(reference_level, reference_level, reference_level)
+    ),
+    summary_tbl = selected_summary_tbl
+  )
+}
+
+attach_depth_category <- function(data_obj, depth_boundary_info) {
+  data_obj |>
+    dplyr::mutate(
+      depth_cat = dplyr::case_when(
+        .data$depth_glmm <= depth_boundary_info$c1 ~ "shallow",
+        .data$depth_glmm <= depth_boundary_info$c2 ~ "mid",
+        .data$depth_glmm > depth_boundary_info$c2 ~ "deep",
+        TRUE ~ NA_character_
+      ),
+      depth_cat = factor(.data$depth_cat, levels = c("shallow", "mid", "deep"))
+    ) |>
+    dplyr::mutate(
+      depth_cat = stats::relevel(.data$depth_cat, ref = depth_boundary_info$reference_level)
+    )
+}
+
+prepare_model_factors <- function(data_obj) {
+  data_obj |>
+    dplyr::mutate(
+      year = factor(.data$year, levels = sort(unique(.data$year))),
+      month = factor(.data$month, levels = sort(unique(.data$month))),
+      area = factor(.data$area, levels = sort(unique(.data$area))),
+      vessel = factor(.data$vessel, levels = sort(unique(.data$vessel)))
+    )
+}
+
+make_compare_dataset <- function(glmm_input, response_name, depth_boundary_info) {
+  compare_tbl <- glmm_input |>
+    dplyr::filter(.data$flag_use_for_main_glmm) |>
+    dplyr::transmute(
+      year = .data$year,
+      month = .data$month,
+      area = .data$area,
+      vessel = .data$vessel,
+      effort_glmm = .data$effort_glmm,
+      depth_glmm = .data$depth_glmm,
+      response = .data[[response_name]]
+    ) |>
+    dplyr::filter(
+      !is.na(.data$response),
+      !is.na(.data$year),
+      !is.na(.data$month),
+      !is.na(.data$area),
+      !is.na(.data$vessel),
+      !is.na(.data$effort_glmm),
+      !is.na(.data$depth_glmm),
+      is.finite(.data$response),
+      is.finite(.data$effort_glmm),
+      is.finite(.data$depth_glmm),
+      .data$effort_glmm > 0
+    )
+
+  if (nrow(compare_tbl) == 0) {
+    stop("No rows available for compare dataset.")
+  }
+
+  depth_mean <- mean(compare_tbl$depth_glmm, na.rm = TRUE)
+  depth_sd <- stats::sd(compare_tbl$depth_glmm, na.rm = TRUE)
+
+  if (!is.finite(depth_sd) || depth_sd <= 0) {
+    stop("depth_glmm standard deviation must be finite and > 0 on compare dataset.")
+  }
+
+  compare_tbl |>
+    dplyr::mutate(
+      depth_glmm_sc = (.data$depth_glmm - depth_mean) / depth_sd
+    ) |>
+    attach_depth_category(depth_boundary_info = depth_boundary_info) |>
+    prepare_model_factors()
+}
+
+make_final_dataset <- function(glmm_input, response_name, uses_depth, depth_boundary_info, compare_tbl = NULL) {
+  if (isTRUE(uses_depth)) {
+    return(compare_tbl)
+  }
+
+  final_tbl <- glmm_input |>
+    dplyr::filter(.data$flag_use_for_main_glmm) |>
+    dplyr::transmute(
+      year = .data$year,
+      month = .data$month,
+      area = .data$area,
+      vessel = .data$vessel,
+      effort_glmm = .data$effort_glmm,
+      depth_glmm = .data$depth_glmm,
+      response = .data[[response_name]]
+    ) |>
+    dplyr::filter(
+      !is.na(.data$response),
+      !is.na(.data$year),
+      !is.na(.data$month),
+      !is.na(.data$area),
+      !is.na(.data$vessel),
+      !is.na(.data$effort_glmm),
+      is.finite(.data$response),
+      is.finite(.data$effort_glmm),
+      .data$effort_glmm > 0
+    ) |>
+    attach_depth_category(depth_boundary_info = depth_boundary_info) |>
+    prepare_model_factors()
+
+  if (nrow(final_tbl) == 0) {
+    stop("No rows available for final dataset.")
+  }
+
+  final_tbl
+}
+
+build_candidate_model_specs <- function() {
+  fixed_specs <- list(
+    list(
+      fixed_mode = "year_only",
+      fixed_tag = "Y",
+      fixed_terms = "year",
+      label_terms = "year"
+    ),
+    list(
+      fixed_mode = "year_month",
+      fixed_tag = "YM",
+      fixed_terms = "year + month",
+      label_terms = "year + month"
+    )
+  )
+
+  depth_specs <- list(
+    list(
+      depth_mode = "none",
+      depth_tag = "D0",
+      uses_depth = FALSE,
+      depth_terms = NULL,
+      label_terms = NULL
+    ),
+    list(
+      depth_mode = "quad",
+      depth_tag = "D2",
+      uses_depth = TRUE,
+      depth_terms = "depth_glmm_sc + I(depth_glmm_sc^2)",
+      label_terms = "depth_quad"
+    ),
+    list(
+      depth_mode = "cat",
+      depth_tag = "Dc",
+      uses_depth = TRUE,
+      depth_terms = "depth_cat",
+      label_terms = "depth_cat"
+    )
+  )
+
+  random_specs <- list(
+    list(
+      random_mode = "none",
+      random_tag = "R0",
+      random_terms = NULL,
+      label_terms = NULL
+    ),
+    list(
+      random_mode = "area",
+      random_tag = "Ra",
+      random_terms = "(1 | area)",
+      label_terms = "(1|area)"
+    ),
+    list(
+      random_mode = "vessel",
+      random_tag = "Rv",
+      random_terms = "(1 | vessel)",
+      label_terms = "(1|vessel)"
+    ),
+    list(
+      random_mode = "area_vessel",
+      random_tag = "Rav",
+      random_terms = "(1 | area) + (1 | vessel)",
+      label_terms = "(1|area) + (1|vessel)"
+    )
+  )
+
+  spec_grid <- expand.grid(
+    fixed_idx = seq_along(fixed_specs),
+    depth_idx = seq_along(depth_specs),
+    random_idx = seq_along(random_specs),
+    KEEP.OUT.ATTRS = FALSE,
+    stringsAsFactors = FALSE
+  )
+
+  purrr::pmap(
+    list(spec_grid$fixed_idx, spec_grid$depth_idx, spec_grid$random_idx),
+    function(fixed_idx, depth_idx, random_idx) {
+      fixed_spec <- fixed_specs[[fixed_idx]]
+      depth_spec <- depth_specs[[depth_idx]]
+      random_spec <- random_specs[[random_idx]]
+      rhs_terms <- c(fixed_spec$fixed_terms, depth_spec$depth_terms, "offset(log(effort_glmm))", random_spec$random_terms)
+      label_terms <- c(fixed_spec$label_terms, depth_spec$label_terms, "offset", random_spec$label_terms)
+
+      list(
+        model_id = paste(fixed_spec$fixed_tag, fixed_spec$fixed_mode, depth_spec$depth_tag, random_spec$random_tag, sep = "_"),
+        model_label = paste(label_terms[!is.na(label_terms) & nzchar(label_terms)], collapse = " + "),
+        formula_text = paste("response ~", paste(rhs_terms[!is.na(rhs_terms) & nzchar(rhs_terms)], collapse = " + ")),
+        uses_depth = depth_spec$uses_depth,
+        depth_mode = depth_spec$depth_mode,
+        random_mode = random_spec$random_mode,
+        fixed_mode = fixed_spec$fixed_mode
+      )
+    }
+  )
+}
+
+extract_model_metrics <- function(response_name, spec_i, fit_out_i) {
+  fit_obj <- fit_out_i$fit
+  warning_message <- combine_messages(fit_out_i$warning_message, fit_out_i$error_message)
+
   if (is.null(fit_obj)) {
     return(tibble::tibble(
-      model_name = model_name,
-      area_type = area_type,
-      depth_degree = depth_degree,
+      response = response_name,
+      model_id = spec_i$model_id,
+      model_label = spec_i$model_label,
+      status = "fit_failed",
+      nobs = NA_integer_,
       AIC = NA_real_,
       BIC = NA_real_,
       logLik = NA_real_,
-      nobs = NA_integer_,
       converged = NA,
       pdHess = NA,
-      warning_message = warning_message
+      warning_message = warning_message,
+      uses_depth = spec_i$uses_depth,
+      depth_mode = spec_i$depth_mode,
+      random_mode = spec_i$random_mode,
+      fixed_mode = spec_i$fixed_mode
     ))
   }
 
   tibble::tibble(
-    model_name = model_name,
-    area_type = area_type,
-    depth_degree = depth_degree,
+    response = response_name,
+    model_id = spec_i$model_id,
+    model_label = spec_i$model_label,
+    status = "completed",
+    nobs = tryCatch(as.integer(stats::nobs(fit_obj)), error = function(e) NA_integer_),
     AIC = tryCatch(as.numeric(AIC(fit_obj)[1]), error = function(e) NA_real_),
     BIC = tryCatch(as.numeric(BIC(fit_obj)[1]), error = function(e) NA_real_),
     logLik = tryCatch(as.numeric(logLik(fit_obj)), error = function(e) NA_real_),
-    nobs = tryCatch(as.integer(stats::nobs(fit_obj)), error = function(e) NA_integer_),
     converged = tryCatch(isTRUE(fit_obj$fit$convergence == 0), error = function(e) NA),
     pdHess = tryCatch(isTRUE(fit_obj$sdr$pdHess), error = function(e) NA),
-    warning_message = warning_message
+    warning_message = warning_message,
+    uses_depth = spec_i$uses_depth,
+    depth_mode = spec_i$depth_mode,
+    random_mode = spec_i$random_mode,
+    fixed_mode = spec_i$fixed_mode
   )
 }
 
-extract_re_sd <- function(varcorr_cond, grp_name) {
-  if (is.null(varcorr_cond[[grp_name]])) {
-    return(c(variance = NA_real_, sd = NA_real_))
+select_best_model <- function(compare_results_tbl) {
+  valid_tbl <- compare_results_tbl |>
+    dplyr::filter(
+      .data$status == "completed",
+      .data$converged == TRUE,
+      .data$pdHess == TRUE,
+      is.finite(.data$AIC)
+    ) |>
+    dplyr::arrange(.data$AIC, .data$model_id)
+
+  if (nrow(valid_tbl) == 0) {
+    return(NULL)
   }
 
-  grp_mat <- varcorr_cond[[grp_name]]
-  grp_sd <- attr(grp_mat, "stddev")
-
-  c(
-    variance = as.numeric(grp_mat[1, 1]),
-    sd = as.numeric(grp_sd[[1]])
-  )
+  valid_tbl[1, , drop = FALSE]
 }
 
-plot_year_index <- function(tbl, output_path, title_text, show_ci = FALSE) {
-  year_index_col <- get_year_index_col(tbl)
-  plot_tbl <- tbl |>
-    dplyr::mutate(year = to_year_numeric(.data$year))
+compute_year_index_table <- function(model_obj, data_obj, depth_mode, depth_reference_level = NULL) {
+  model_frame_names <- names(stats::model.frame(model_obj))
+  year_levels_used <- get_observed_levels(data_obj$year)
+  pred_grid <- tidyr::expand_grid(
+    year = factor(year_levels_used, levels = levels(data_obj$year))
+  )
 
-  p <- ggplot2::ggplot(plot_tbl, ggplot2::aes(x = .data$year, y = .data[[year_index_col]], group = 1)) +
-    ggplot2::geom_line() +
-    ggplot2::geom_point(size = 2) +
-    ggplot2::labs(
-      title = title_text,
-      x = "Year",
-      y = "Index"
-    ) +
-    ggplot2::scale_x_continuous(breaks = sort(unique(plot_tbl$year))) +
-    ggplot2::theme_bw()
-
-  if (isTRUE(show_ci) && all(c("lower.CL", "upper.CL") %in% names(plot_tbl))) {
-    p <- p +
-      ggplot2::geom_errorbar(ggplot2::aes(ymin = .data$lower.CL, ymax = .data$upper.CL), width = 0.15)
+  if ("month" %in% model_frame_names) {
+    month_levels_used <- get_observed_levels(data_obj$month)
+    pred_grid <- tidyr::expand_grid(
+      year = factor(year_levels_used, levels = levels(data_obj$year)),
+      month = factor(month_levels_used, levels = levels(data_obj$month))
+    )
   }
 
-  ggplot2::ggsave(
-    filename = output_path,
-    plot = p,
-    width = 10,
-    height = 6,
-    dpi = 150
+  pred_grid$effort_glmm <- 1
+
+  if ("depth_glmm_sc" %in% model_frame_names && identical(depth_mode, "quad")) {
+    pred_grid$depth_glmm_sc <- 0
+  }
+
+  if ("depth_cat" %in% model_frame_names && identical(depth_mode, "cat")) {
+    pred_grid$depth_cat <- factor(depth_reference_level, levels = levels(data_obj$depth_cat))
+  }
+
+  if ("area" %in% model_frame_names) {
+    pred_grid$area <- factor(get_observed_levels(data_obj$area)[[1]], levels = levels(data_obj$area))
+  }
+
+  if ("vessel" %in% model_frame_names) {
+    pred_grid$vessel <- factor(get_observed_levels(data_obj$vessel)[[1]], levels = levels(data_obj$vessel))
+  }
+
+  pred_out <- predict(
+    model_obj,
+    newdata = pred_grid,
+    type = "response",
+    re.form = NA,
+    se.fit = TRUE
   )
 
-  cat("saved:", output_path, "\n")
-}
+  fit_vals <- pred_out$fit %||% pred_out
+  se_vals <- pred_out$se.fit %||% rep(NA_real_, length(fit_vals))
 
-make_raw_cpue_table <- function(data_obj, response_col) {
-  data_obj |>
-    dplyr::filter(!is.na(.data$year), !is.na(.data$effort_glmm), is.finite(.data$effort_glmm), .data$effort_glmm > 0, !is.na(.data[[response_col]])) |>
+  pred_grid |>
+    dplyr::mutate(
+      year = to_year_numeric(.data$year),
+      predicted = as.numeric(fit_vals),
+      lower.CL = pmax(.data$predicted - 1.96 * as.numeric(se_vals), 0),
+      upper.CL = .data$predicted + 1.96 * as.numeric(se_vals)
+    ) |>
     dplyr::group_by(.data$year) |>
     dplyr::summarise(
-      total_count = sum(.data[[response_col]], na.rm = TRUE),
-      total_effort = sum(.data$effort_glmm, na.rm = TRUE),
-      cpue = .data$total_count / .data$total_effort,
+      response = mean(.data$predicted),
+      lower.CL = mean(.data$lower.CL, na.rm = TRUE),
+      upper.CL = mean(.data$upper.CL, na.rm = TRUE),
       .groups = "drop"
-    ) |>
-    dplyr::arrange(.data$year)
+    )
 }
 
-plot_raw_cpue <- function(tbl, output_path, title_text) {
-  plot_tbl <- tbl |>
-    dplyr::mutate(year = to_year_numeric(.data$year))
-
-  p <- ggplot2::ggplot(plot_tbl, ggplot2::aes(x = .data$year, y = .data$cpue, group = 1)) +
-    ggplot2::geom_line() +
-    ggplot2::geom_point(size = 2) +
-    ggplot2::labs(
-      title = title_text,
-      x = "Year",
-      y = "CPUE"
-    ) +
-    ggplot2::scale_x_continuous(breaks = sort(unique(plot_tbl$year))) +
-    ggplot2::theme_bw()
-
-  ggplot2::ggsave(
-    filename = output_path,
-    plot = p,
-    width = 10,
-    height = 6,
-    dpi = 150
-  )
-
-  cat("saved:", output_path, "\n")
-}
-
-build_standardized_index_table <- function(tbl, response_name) {
+build_standardized_index_table <- function(tbl, response_name, best_model_id) {
   year_index_col <- get_year_index_col(tbl)
   estimate_vals <- suppressWarnings(as.numeric(tbl[[year_index_col]]))
   lower_vals <- if ("lower.CL" %in% names(tbl)) suppressWarnings(as.numeric(tbl[["lower.CL"]])) else rep(NA_real_, nrow(tbl))
@@ -278,6 +628,7 @@ build_standardized_index_table <- function(tbl, response_name) {
 
   tibble::tibble(
     response = response_name,
+    best_model_id = best_model_id,
     year = to_year_numeric(tbl$year),
     estimate = estimate_vals / estimate_mean,
     lower.CL = lower_vals / estimate_mean,
@@ -285,20 +636,160 @@ build_standardized_index_table <- function(tbl, response_name) {
   )
 }
 
-summarise_rows_by_year <- function(glmm_input, response_col, depth_required = FALSE) {
-  glmm_input |>
+make_raw_cpue_table <- function(data_obj, response_name) {
+  data_obj |>
+    dplyr::filter(
+      !is.na(.data$year),
+      !is.na(.data$effort_glmm),
+      !is.na(.data$response),
+      is.finite(.data$effort_glmm),
+      is.finite(.data$response),
+      .data$effort_glmm > 0
+    ) |>
     dplyr::group_by(.data$year) |>
     dplyr::summarise(
-      n_input = dplyr::n(),
-      n_used = sum(
-        .data$flag_use_for_main_glmm &
-          !is.na(.data[[response_col]]) &
-          (!depth_required | !is.na(.data$depth_glmm)),
-        na.rm = TRUE
-      ),
-      n_dropped = .data$n_input - .data$n_used,
+      total_count = sum(.data$response, na.rm = TRUE),
+      total_effort = sum(.data$effort_glmm, na.rm = TRUE),
+      cpue = .data$total_count / .data$total_effort,
       .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      response = response_name,
+      year = to_year_numeric(.data$year)
+    ) |>
+    dplyr::arrange(.data$year)
+}
+
+build_overlay_table <- function(index_tbl, raw_cpue_tbl, response_name, best_model_id) {
+  cpue_mean <- mean(raw_cpue_tbl$cpue, na.rm = TRUE)
+
+  raw_tbl <- raw_cpue_tbl |>
+    dplyr::transmute(
+      response = response_name,
+      best_model_id = best_model_id,
+      year = .data$year,
+      series = "Raw relative CPUE",
+      value = if (is.finite(cpue_mean) && cpue_mean > 0) .data$cpue / cpue_mean else NA_real_,
+      lower.CL = NA_real_,
+      upper.CL = NA_real_
     )
+
+  index_plot_tbl <- index_tbl |>
+    dplyr::transmute(
+      response = response_name,
+      best_model_id = best_model_id,
+      year = .data$year,
+      series = "Standardized index",
+      value = .data$estimate,
+      lower.CL = .data$lower.CL,
+      upper.CL = .data$upper.CL
+    )
+
+  dplyr::bind_rows(raw_tbl, index_plot_tbl)
+}
+
+plot_year_index <- function(index_tbl, output_path, title_text, show_ci = FALSE) {
+  p <- ggplot2::ggplot(index_tbl, ggplot2::aes(x = .data$year, y = .data$estimate, group = 1)) +
+    ggplot2::geom_line() +
+    ggplot2::geom_point(size = 2) +
+    ggplot2::labs(
+      title = title_text,
+      x = "Year",
+      y = "Standardized index"
+    ) +
+    ggplot2::scale_x_continuous(breaks = sort(unique(index_tbl$year))) +
+    ggplot2::theme_bw()
+
+  if (isTRUE(show_ci)) {
+    p <- p +
+      ggplot2::geom_errorbar(
+        ggplot2::aes(ymin = .data$lower.CL, ymax = .data$upper.CL),
+        width = 0.15
+      )
+  }
+
+  ggplot2::ggsave(
+    filename = output_path,
+    plot = p,
+    width = 10,
+    height = 6,
+    dpi = 150
+  )
+}
+
+plot_overlay <- function(overlay_tbl, output_path, title_text) {
+  p <- ggplot2::ggplot(
+    overlay_tbl,
+    ggplot2::aes(
+      x = .data$year,
+      y = .data$value,
+      color = .data$series,
+      linetype = .data$series,
+      shape = .data$series,
+      group = .data$series
+    )
+  ) +
+    ggplot2::geom_hline(yintercept = 1, linetype = "dashed", color = "grey40") +
+    ggplot2::geom_line() +
+    ggplot2::geom_point(size = 2) +
+    ggplot2::geom_errorbar(
+      data = dplyr::filter(overlay_tbl, .data$series == "Standardized index"),
+      ggplot2::aes(ymin = .data$lower.CL, ymax = .data$upper.CL),
+      width = 0.15
+    ) +
+    ggplot2::labs(
+      title = title_text,
+      x = "Year",
+      y = "Relative value",
+      color = NULL,
+      linetype = NULL,
+      shape = NULL
+    ) +
+    ggplot2::scale_x_continuous(breaks = sort(unique(overlay_tbl$year))) +
+    ggplot2::theme_bw()
+
+  ggplot2::ggsave(
+    filename = output_path,
+    plot = p,
+    width = 10,
+    height = 6,
+    dpi = 150
+  )
+}
+
+write_best_model_detail <- function(fit_obj, output_path) {
+  detail_lines <- capture.output(summary(fit_obj))
+  writeLines(detail_lines, con = output_path, useBytes = TRUE)
+}
+
+build_best_model_summary_row <- function(response_name, best_model_row, final_fit_out, final_dataset_rows, compare_dataset_rows) {
+  fit_obj <- final_fit_out$fit
+  vc_cond <- tryCatch(VarCorr(fit_obj)$cond, error = function(e) NULL)
+  area_stats <- extract_re_sd(vc_cond, "area")
+  vessel_stats <- extract_re_sd(vc_cond, "vessel")
+
+  tibble::tibble(
+    response = response_name,
+    best_model_id = best_model_row$model_id,
+    best_model_label = best_model_row$model_label,
+    formula = paste(base::deparse(stats::formula(fit_obj)), collapse = " "),
+    compare_dataset_rows = compare_dataset_rows,
+    final_dataset_rows = final_dataset_rows,
+    n_zero = sum(model.frame(fit_obj)[["response"]] == 0, na.rm = TRUE),
+    zero_ratio = mean(model.frame(fit_obj)[["response"]] == 0, na.rm = TRUE),
+    AIC = tryCatch(as.numeric(AIC(fit_obj)[1]), error = function(e) NA_real_),
+    BIC = tryCatch(as.numeric(BIC(fit_obj)[1]), error = function(e) NA_real_),
+    logLik = tryCatch(as.numeric(logLik(fit_obj)), error = function(e) NA_real_),
+    dispersion_parameter = tryCatch(as.numeric(sigma(fit_obj)), error = function(e) NA_real_),
+    convergence_code = tryCatch(as.integer(fit_obj$fit$convergence), error = function(e) NA_integer_),
+    converged = tryCatch(isTRUE(fit_obj$fit$convergence == 0), error = function(e) NA),
+    pdHess = tryCatch(isTRUE(fit_obj$sdr$pdHess), error = function(e) NA),
+    area_variance = area_stats[["variance"]],
+    area_sd = area_stats[["sd"]],
+    vessel_variance = vessel_stats[["variance"]],
+    vessel_sd = vessel_stats[["sd"]],
+    warning_message = combine_messages(final_fit_out$warning_message, final_fit_out$error_message)
+  )
 }
 
 if (!file.exists(input_path)) {
@@ -311,242 +802,325 @@ glmm_input <- readr::read_csv(input_path, show_col_types = FALSE) |>
     month = suppressWarnings(as.integer(.data$month)),
     area = as.character(.data$area),
     vessel = as.character(.data$vessel),
-    count_total = suppressWarnings(as.numeric(.data$count_total)),
     effort_glmm = suppressWarnings(as.numeric(.data$effort_glmm)),
     depth_glmm = suppressWarnings(as.numeric(.data$depth_glmm)),
     chu = suppressWarnings(as.numeric(.data$chu)),
     dai = suppressWarnings(as.numeric(.data$dai)),
     toku = suppressWarnings(as.numeric(.data$toku)),
     tokudai = suppressWarnings(as.numeric(.data$tokudai)),
+    count_total = suppressWarnings(as.numeric(.data$count_total)),
     flag_use_for_main_glmm = as.logical(.data$flag_use_for_main_glmm)
   )
 
-required_cols <- c("year", "month", "area", "vessel", "count_total", "effort_glmm", "depth_glmm", "chu", "dai", "toku", "tokudai", "flag_use_for_main_glmm")
+required_cols <- c(
+  "year", "month", "area", "vessel", "effort_glmm", "depth_glmm",
+  "chu", "dai", "toku", "tokudai", "count_total", "flag_use_for_main_glmm"
+)
 missing_cols <- setdiff(required_cols, names(glmm_input))
 
 if (length(missing_cols) > 0) {
   stop("Required columns are missing: ", paste(missing_cols, collapse = ", "))
 }
 
-cat("count_total_na_n=", sum(is.na(glmm_input$count_total)), "\n", sep = "")
+depth_boundary_info <- determine_depth_boundaries(glmm_input)
 
-glmm_dat_main <- glmm_input |>
-  dplyr::filter(.data$flag_use_for_main_glmm) |>
-  dplyr::mutate(
-    year = factor(.data$year),
-    month = factor(.data$month, levels = sort(unique(.data$month))),
-    area = factor(.data$area),
-    vessel = factor(.data$vessel)
-  )
+readr::write_csv(depth_boundary_info$definition_tbl, path_depth_definition)
+readr::write_csv(depth_boundary_info$summary_tbl, path_depth_summary)
 
-if (nrow(glmm_dat_main) == 0) {
-  stop("No rows available for GLMM after flag_use_for_main_glmm filtering.")
-}
-
-if (any(is.na(glmm_dat_main$effort_glmm)) || any(!is.finite(glmm_dat_main$effort_glmm)) || any(glmm_dat_main$effort_glmm <= 0)) {
-  stop("effort_glmm must be finite and > 0 in the filtered data.")
-}
-
-glmm_dat_depth <- glmm_dat_main |>
-  dplyr::filter(!is.na(.data$depth_glmm), is.finite(.data$depth_glmm))
-
-depth_glmm_mean <- if (nrow(glmm_dat_depth) > 0) mean(glmm_dat_depth$depth_glmm, na.rm = TRUE) else NA_real_
-depth_glmm_sd <- if (nrow(glmm_dat_depth) > 1) stats::sd(glmm_dat_depth$depth_glmm, na.rm = TRUE) else NA_real_
-
-if (nrow(glmm_dat_depth) > 0 && is.finite(depth_glmm_sd) && depth_glmm_sd > 0) {
-  glmm_dat_depth <- glmm_dat_depth |>
-    dplyr::mutate(depth_glmm_sc = (.data$depth_glmm - depth_glmm_mean) / depth_glmm_sd)
-}
-
-analysis_specs <- list(
-  list(response = "chu", result_group = "main", depth_flag = "depth0", area_vessel_flag = "av0", dataset = "main", model_formula = chu ~ year + month + offset(log(effort_glmm)), include_raw_cpue = TRUE, title = "chu main analysis depth0 no Area/Vessel"),
-  list(response = "dai", result_group = "main", depth_flag = "depth0", area_vessel_flag = "av0", dataset = "main", model_formula = dai ~ year + month + offset(log(effort_glmm)), include_raw_cpue = TRUE, title = "dai main analysis depth0 no Area/Vessel"),
-  list(response = "toku", result_group = "main", depth_flag = "depth0", area_vessel_flag = "av0", dataset = "main", model_formula = toku ~ year + month + offset(log(effort_glmm)), include_raw_cpue = TRUE, title = "toku main analysis depth0 no Area/Vessel"),
-  list(response = "tokudai", result_group = "main", depth_flag = "depth0", area_vessel_flag = "av0", dataset = "main", model_formula = tokudai ~ year + month + offset(log(effort_glmm)), include_raw_cpue = TRUE, title = "tokudai main analysis depth0 no Area/Vessel"),
-  list(response = "count_total", result_group = "sub", depth_flag = "depth0", area_vessel_flag = "av0", dataset = "main", model_formula = count_total ~ year + month + offset(log(effort_glmm)), include_raw_cpue = TRUE, title = "total sub analysis depth0 no Area/Vessel"),
-  list(response = "chu", result_group = "sub", depth_flag = "depth1", area_vessel_flag = "av0", dataset = "depth", model_formula = chu ~ year + month + depth_glmm_sc + offset(log(effort_glmm)), include_raw_cpue = FALSE, title = "chu sub analysis depth1 no Area/Vessel"),
-  list(response = "dai", result_group = "sub", depth_flag = "depth1", area_vessel_flag = "av0", dataset = "depth", model_formula = dai ~ year + month + depth_glmm_sc + offset(log(effort_glmm)), include_raw_cpue = FALSE, title = "dai sub analysis depth1 no Area/Vessel"),
-  list(response = "toku", result_group = "sub", depth_flag = "depth1", area_vessel_flag = "av0", dataset = "depth", model_formula = toku ~ year + month + depth_glmm_sc + offset(log(effort_glmm)), include_raw_cpue = FALSE, title = "toku sub analysis depth1 no Area/Vessel"),
-  list(response = "tokudai", result_group = "sub", depth_flag = "depth1", area_vessel_flag = "av0", dataset = "depth", model_formula = tokudai ~ year + month + depth_glmm_sc + offset(log(effort_glmm)), include_raw_cpue = FALSE, title = "tokudai sub analysis depth1 no Area/Vessel"),
-  list(response = "count_total", result_group = "sub", depth_flag = "depth1", area_vessel_flag = "av0", dataset = "depth", model_formula = count_total ~ year + month + depth_glmm_sc + offset(log(effort_glmm)), include_raw_cpue = FALSE, title = "total sub analysis depth1 no Area/Vessel"),
-  list(response = "chu", result_group = "sensitivity", depth_flag = "depth0", area_vessel_flag = "av1", dataset = "main", model_formula = chu ~ year + month + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "chu sensitivity depth0 with Area/Vessel"),
-  list(response = "dai", result_group = "sensitivity", depth_flag = "depth0", area_vessel_flag = "av1", dataset = "main", model_formula = dai ~ year + month + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "dai sensitivity depth0 with Area/Vessel"),
-  list(response = "toku", result_group = "sensitivity", depth_flag = "depth0", area_vessel_flag = "av1", dataset = "main", model_formula = toku ~ year + month + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "toku sensitivity depth0 with Area/Vessel"),
-  list(response = "tokudai", result_group = "sensitivity", depth_flag = "depth0", area_vessel_flag = "av1", dataset = "main", model_formula = tokudai ~ year + month + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "tokudai sensitivity depth0 with Area/Vessel"),
-  list(response = "count_total", result_group = "sensitivity", depth_flag = "depth0", area_vessel_flag = "av1", dataset = "main", model_formula = count_total ~ year + month + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "total sensitivity depth0 with Area/Vessel"),
-  list(response = "chu", result_group = "sensitivity", depth_flag = "depth1", area_vessel_flag = "av1", dataset = "depth", model_formula = chu ~ year + month + depth_glmm_sc + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "chu sensitivity depth1 with Area/Vessel"),
-  list(response = "dai", result_group = "sensitivity", depth_flag = "depth1", area_vessel_flag = "av1", dataset = "depth", model_formula = dai ~ year + month + depth_glmm_sc + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "dai sensitivity depth1 with Area/Vessel"),
-  list(response = "toku", result_group = "sensitivity", depth_flag = "depth1", area_vessel_flag = "av1", dataset = "depth", model_formula = toku ~ year + month + depth_glmm_sc + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "toku sensitivity depth1 with Area/Vessel"),
-  list(response = "tokudai", result_group = "sensitivity", depth_flag = "depth1", area_vessel_flag = "av1", dataset = "depth", model_formula = tokudai ~ year + month + depth_glmm_sc + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "tokudai sensitivity depth1 with Area/Vessel"),
-  list(response = "count_total", result_group = "sensitivity", depth_flag = "depth1", area_vessel_flag = "av1", dataset = "depth", model_formula = count_total ~ year + month + depth_glmm_sc + offset(log(effort_glmm)) + (1 | area) + (1 | vessel), include_raw_cpue = FALSE, title = "total sensitivity depth1 with Area/Vessel")
+cat("depth category boundary =", depth_boundary_info$c1, ",", depth_boundary_info$c2, "\n")
+cat(
+  "depth category counts =",
+  paste0(depth_boundary_info$summary_tbl$depth_cat, ": ", depth_boundary_info$summary_tbl$n, collapse = ", "),
+  "\n"
 )
 
-model_summary_tbl <- tibble::tibble()
-model_manifest_tbl <- tibble::tibble()
-raw_cpue_manifest_tbl <- tibble::tibble()
+candidate_model_specs <- build_candidate_model_specs()
+all_compare_results_tbl <- tibble::tibble()
+best_model_table_tbl <- tibble::tibble()
+best_model_summary_tbl <- tibble::tibble()
+workflow_results <- list()
 
-for (spec_i in analysis_specs) {
-  dataset_i <- if (identical(spec_i$dataset, "depth")) glmm_dat_depth else glmm_dat_main
+for (response_name in response_levels) {
+  response_result <- tryCatch(
+    {
+      compare_tbl <- make_compare_dataset(glmm_input, response_name, depth_boundary_info)
+      compare_dataset_rows <- nrow(compare_tbl)
+      compare_results_tbl <- tibble::tibble()
+      compare_fit_list <- list()
 
-  if (identical(spec_i$dataset, "depth") && (!is.finite(depth_glmm_sd) || depth_glmm_sd <= 0 || nrow(glmm_dat_depth) == 0)) {
-    next
-  }
+      cat("response =", response_name, "| compare dataset rows =", compare_dataset_rows, "\n")
+      cat("response =", response_name, "| depth category boundary =", depth_boundary_info$c1, ",", depth_boundary_info$c2, "\n")
 
-  data_i <- dataset_i |>
-    dplyr::filter(!is.na(.data[[spec_i$response]]))
+      for (spec_i in candidate_model_specs) {
+        fit_out_i <- safe_fit_glmmTMB(
+          model_id = spec_i$model_id,
+          formula_obj = stats::as.formula(spec_i$formula_text),
+          data_obj = compare_tbl
+        )
 
-  if (nrow(data_i) == 0) {
-    next
-  }
+        compare_fit_list[[spec_i$model_id]] <- fit_out_i
+        compare_results_tbl <- dplyr::bind_rows(
+          compare_results_tbl,
+          extract_model_metrics(response_name, spec_i, fit_out_i)
+        )
+      }
 
-  response_file_tag_i <- if (identical(spec_i$response, "count_total")) "total" else spec_i$response
-  prefix_i <- paste(response_file_tag_i, spec_i$result_group, spec_i$depth_flag, spec_i$area_vessel_flag, sep = "_")
-  model_path_i <- file.path("output", "models", paste0("fit_nb_", prefix_i, ".rds"))
-  emm_path_i <- file.path("output", "tables", paste0("emm_year_", prefix_i, ".csv"))
-  row_summary_path_i <- file.path("output", "tables", paste0("check_", prefix_i, "_row_summary_by_year.csv"))
-  index_fig_path_i <- file.path("output", "figures", paste0("index_", prefix_i, ".png"))
-  index_ci_fig_path_i <- file.path("output", "figures", paste0("index_", prefix_i, "_ci.png"))
-  raw_cpue_table_path_i <- file.path("output", "tables", paste0("raw_annual_cpue_", prefix_i, ".csv"))
-  raw_cpue_fig_path_i <- file.path("output", "figures", paste0("index_", prefix_i, "_raw_cpue.png"))
+      min_aic <- if (any(is.finite(compare_results_tbl$AIC))) {
+        min(compare_results_tbl$AIC, na.rm = TRUE)
+      } else {
+        NA_real_
+      }
 
-  fit_out_i <- safe_fit_glmmTMB(
-    model_name = paste0("fit_nb_", prefix_i),
-    formula_obj = spec_i$model_formula,
-    data_obj = data_i
-  )
+      compare_results_tbl <- compare_results_tbl |>
+        dplyr::mutate(
+          delta_AIC = if (is.finite(min_aic)) .data$AIC - min_aic else NA_real_
+        ) |>
+        dplyr::select(
+          "response", "model_id", "model_label", "status", "nobs", "AIC", "BIC", "logLik",
+          "converged", "pdHess", "warning_message", "delta_AIC",
+          "uses_depth", "depth_mode", "random_mode", "fixed_mode"
+        ) |>
+        dplyr::arrange(.data$delta_AIC, .data$model_id)
 
-  if (is.null(fit_out_i$fit)) {
-    model_manifest_tbl <- dplyr::bind_rows(
-      model_manifest_tbl,
-      tibble::tibble(
-        response = spec_i$response,
-        result_group = spec_i$result_group,
-        depth_flag = spec_i$depth_flag,
-        area_vessel_flag = spec_i$area_vessel_flag,
-        status = "fit_failed",
-        model_path = model_path_i,
-        emm_year_path = emm_path_i,
-        row_summary_path = row_summary_path_i,
-        index_fig_path = index_fig_path_i,
-        index_ci_fig_path = index_ci_fig_path_i,
-        raw_cpue_table_path = dplyr::if_else(spec_i$include_raw_cpue, raw_cpue_table_path_i, NA_character_),
-        raw_cpue_fig_path = dplyr::if_else(spec_i$include_raw_cpue, raw_cpue_fig_path_i, NA_character_),
-        warning_message = fit_out_i$warning_message
+      compare_csv_path <- file.path("output", "tables", paste0("aic_compare_", response_name, ".csv"))
+      readr::write_csv(compare_results_tbl, compare_csv_path)
+
+      cat(
+        "response =", response_name, "| fitted candidate model ids =",
+        paste(compare_results_tbl$model_id, collapse = ", "),
+        "\n"
       )
-    )
-    next
-  }
 
-  saveRDS(fit_out_i$fit, model_path_i)
+      best_model_row <- select_best_model(compare_results_tbl)
 
-  if (isTRUE(optional_pkgs[["DHARMa"]])) {
-    print(try(DHARMa::testDispersion(DHARMa::simulateResiduals(fit_out_i$fit, plot = FALSE)), silent = TRUE))
-  }
+      if (is.null(best_model_row)) {
+        best_model_table_row <- tibble::tibble(
+          response = response_name,
+          best_model_id = NA_character_,
+          best_model_label = NA_character_,
+          AIC = NA_real_,
+          delta_AIC = NA_real_,
+          nobs_compare = NA_integer_,
+          uses_depth = NA,
+          depth_mode = NA_character_,
+          random_mode = NA_character_,
+          fixed_mode = NA_character_,
+          compare_dataset_rows = compare_dataset_rows,
+          final_dataset_rows = NA_integer_
+        )
 
-  emm_year_tbl_i <- compute_year_index_table(
-    model_obj = fit_out_i$fit,
-    data_obj = data_i,
-    optional_pkgs = optional_pkgs,
-    depth_glmm_sc_value = if (identical(spec_i$depth_flag, "depth1")) 0 else NULL
-  )
+        best_model_table_tbl <- dplyr::bind_rows(best_model_table_tbl, best_model_table_row)
+        all_compare_results_tbl <- dplyr::bind_rows(all_compare_results_tbl, compare_results_tbl)
 
-  row_summary_tbl_i <- summarise_rows_by_year(
-    glmm_input = glmm_input,
-    response_col = spec_i$response,
-    depth_required = identical(spec_i$depth_flag, "depth1")
-  )
+        cat("response =", response_name, "| best model id = none\n")
+        cat("response =", response_name, "| best model uses depth = none\n")
+        cat("response =", response_name, "| final dataset rows = skipped\n")
+        cat("response =", response_name, "| saved file paths =", compare_csv_path, "\n")
 
-  readr::write_csv(emm_year_tbl_i, emm_path_i)
-  readr::write_csv(row_summary_tbl_i, row_summary_path_i)
-  plot_year_index(emm_year_tbl_i, index_fig_path_i, spec_i$title, show_ci = FALSE)
-  plot_year_index(emm_year_tbl_i, index_ci_fig_path_i, spec_i$title, show_ci = TRUE)
+        return(list(
+          response = response_name,
+          compare_tbl = compare_tbl,
+          compare_results_tbl = compare_results_tbl,
+          best_model_table_row = best_model_table_row,
+          best_model_summary_row = NULL
+        ))
+      }
 
-  raw_cpue_table_i <- NULL
-
-  if (isTRUE(spec_i$include_raw_cpue)) {
-    raw_cpue_table_i <- make_raw_cpue_table(glmm_dat_main, spec_i$response)
-    readr::write_csv(raw_cpue_table_i, raw_cpue_table_path_i)
-    plot_raw_cpue(raw_cpue_table_i, raw_cpue_fig_path_i, paste(response_file_tag_i, "raw annual CPUE reference"))
-
-    raw_cpue_manifest_tbl <- dplyr::bind_rows(
-      raw_cpue_manifest_tbl,
-      tibble::tibble(
-        response = spec_i$response,
-        result_group = spec_i$result_group,
-        depth_flag = spec_i$depth_flag,
-        raw_cpue_table_path = raw_cpue_table_path_i,
-        raw_cpue_fig_path = raw_cpue_fig_path_i
+      best_spec <- candidate_model_specs[[match(best_model_row$model_id, vapply(candidate_model_specs, `[[`, character(1), "model_id"))]]
+      final_tbl <- make_final_dataset(
+        glmm_input = glmm_input,
+        response_name = response_name,
+        uses_depth = best_spec$uses_depth,
+        depth_boundary_info = depth_boundary_info,
+        compare_tbl = compare_tbl
       )
-    )
-  }
+      final_dataset_rows <- nrow(final_tbl)
 
-  vc_cond_i <- VarCorr(fit_out_i$fit)$cond
-  area_stats_i <- extract_re_sd(vc_cond_i, "area")
-  vessel_stats_i <- extract_re_sd(vc_cond_i, "vessel")
+      final_fit_out <- safe_fit_glmmTMB(
+        model_id = paste0(best_model_row$model_id, "_final"),
+        formula_obj = stats::as.formula(best_spec$formula_text),
+        data_obj = final_tbl
+      )
 
-  model_summary_tbl <- dplyr::bind_rows(
-    model_summary_tbl,
-    tibble::tibble(
-      response = spec_i$response,
-      result_group = spec_i$result_group,
-      depth_flag = spec_i$depth_flag,
-      area_vessel_flag = spec_i$area_vessel_flag,
-      n_obs = nrow(data_i),
-      n_zero = sum(data_i[[spec_i$response]] == 0, na.rm = TRUE),
-      zero_ratio = mean(data_i[[spec_i$response]] == 0, na.rm = TRUE),
-      aic = tryCatch(as.numeric(AIC(fit_out_i$fit)[1]), error = function(e) NA_real_),
-      logLik = tryCatch(as.numeric(logLik(fit_out_i$fit)), error = function(e) NA_real_),
-      disp_parameter = tryCatch(as.numeric(sigma(fit_out_i$fit)), error = function(e) NA_real_),
-      area_variance = area_stats_i[["variance"]],
-      area_sd = area_stats_i[["sd"]],
-      vessel_variance = vessel_stats_i[["variance"]],
-      vessel_sd = vessel_stats_i[["sd"]],
-      converged = tryCatch(isTRUE(fit_out_i$fit$fit$convergence == 0), error = function(e) NA),
-      fit_convergence_code = tryCatch(as.integer(fit_out_i$fit$fit$convergence), error = function(e) NA_integer_),
-      pdHess = tryCatch(isTRUE(fit_out_i$fit$sdr$pdHess), error = function(e) NA),
-      warning_message = fit_out_i$warning_message,
-      model_path = model_path_i,
-      emm_year_path = emm_path_i,
-      row_summary_path = row_summary_path_i,
-      index_fig_path = index_fig_path_i,
-      index_ci_fig_path = index_ci_fig_path_i
-    )
+      if (is.null(final_fit_out$fit)) {
+        stop("Final refit failed: ", combine_messages(final_fit_out$warning_message, final_fit_out$error_message))
+      }
+
+      model_rds_path <- file.path("output", "models", paste0("fit_best_", response_name, ".rds"))
+      year_index_csv_path <- file.path("output", "tables", paste0("year_index_best_", response_name, ".csv"))
+      raw_cpue_csv_path <- file.path("output", "tables", paste0("raw_cpue_best_", response_name, ".csv"))
+      detail_txt_path <- file.path("output", "tables", paste0("best_model_detail_", response_name, ".txt"))
+      dharma_csv_path <- file.path("output", "tables", paste0("dharma_best_", response_name, ".csv"))
+      index_fig_path <- file.path("output", "figures", paste0("index_best_", response_name, ".png"))
+      index_ci_fig_path <- file.path("output", "figures", paste0("index_best_", response_name, "_ci.png"))
+      overlay_fig_path <- file.path("output", "figures", paste0("overlay_best_", response_name, ".png"))
+      dharma_fig_path <- file.path("output", "figures", paste0("diagnostic_best_", response_name, ".png"))
+
+      year_index_tbl <- compute_year_index_table(
+        model_obj = final_fit_out$fit,
+        data_obj = final_tbl,
+        depth_mode = best_spec$depth_mode,
+        depth_reference_level = depth_boundary_info$reference_level
+      )
+      standardized_index_tbl <- build_standardized_index_table(
+        tbl = year_index_tbl,
+        response_name = response_name,
+        best_model_id = best_model_row$model_id
+      )
+      raw_cpue_tbl <- make_raw_cpue_table(final_tbl, response_name)
+      overlay_tbl <- build_overlay_table(
+        index_tbl = standardized_index_tbl,
+        raw_cpue_tbl = raw_cpue_tbl,
+        response_name = response_name,
+        best_model_id = best_model_row$model_id
+      )
+      dharma_out <- run_dharma_dispersion(
+        fit_obj = final_fit_out$fit,
+        optional_pkgs = optional_pkgs,
+        output_plot_path = dharma_fig_path
+      )
+
+      saveRDS(final_fit_out$fit, model_rds_path)
+      readr::write_csv(standardized_index_tbl, year_index_csv_path)
+      readr::write_csv(raw_cpue_tbl, raw_cpue_csv_path)
+      write_best_model_detail(final_fit_out$fit, detail_txt_path)
+      readr::write_csv(
+        tibble::tibble(
+          response = response_name,
+          best_model_id = best_model_row$model_id,
+          status = dharma_out$status,
+          dispersion = dharma_out$dispersion,
+          dispersion_p = dharma_out$dispersion_p,
+          warning_message = dharma_out$warning_message
+        ),
+        dharma_csv_path
+      )
+      plot_year_index(standardized_index_tbl, index_fig_path, paste(response_name, "best model index"), show_ci = FALSE)
+      plot_year_index(standardized_index_tbl, index_ci_fig_path, paste(response_name, "best model index with CI"), show_ci = TRUE)
+      plot_overlay(overlay_tbl, overlay_fig_path, paste(response_name, "raw relative CPUE vs standardized index"))
+
+      best_model_table_row <- tibble::tibble(
+        response = response_name,
+        best_model_id = best_model_row$model_id,
+        best_model_label = best_model_row$model_label,
+        AIC = best_model_row$AIC,
+        delta_AIC = best_model_row$delta_AIC,
+        nobs_compare = best_model_row$nobs,
+        uses_depth = best_model_row$uses_depth,
+        depth_mode = best_model_row$depth_mode,
+        random_mode = best_model_row$random_mode,
+        fixed_mode = best_model_row$fixed_mode,
+        compare_dataset_rows = compare_dataset_rows,
+        final_dataset_rows = final_dataset_rows
+      )
+
+      best_model_summary_row <- build_best_model_summary_row(
+        response_name = response_name,
+        best_model_row = best_model_row,
+        final_fit_out = final_fit_out,
+        final_dataset_rows = final_dataset_rows,
+        compare_dataset_rows = compare_dataset_rows
+      )
+
+      best_model_table_tbl <- dplyr::bind_rows(best_model_table_tbl, best_model_table_row)
+      best_model_summary_tbl <- dplyr::bind_rows(best_model_summary_tbl, best_model_summary_row)
+      all_compare_results_tbl <- dplyr::bind_rows(all_compare_results_tbl, compare_results_tbl)
+
+      cat("response =", response_name, "| best model id =", best_model_row$model_id, "\n")
+      cat("response =", response_name, "| best model uses depth =", best_model_row$uses_depth, "\n")
+      cat("response =", response_name, "| final dataset rows =", final_dataset_rows, "\n")
+      cat(
+        "response =", response_name, "| saved file paths =",
+        paste(c(compare_csv_path, model_rds_path, year_index_csv_path, index_fig_path, index_ci_fig_path, overlay_fig_path), collapse = ", "),
+        "\n"
+      )
+
+      list(
+        response = response_name,
+        compare_tbl = compare_tbl,
+        final_tbl = final_tbl,
+        compare_results_tbl = compare_results_tbl,
+        best_model_table_row = best_model_table_row,
+        best_model_summary_row = best_model_summary_row
+      )
+    },
+    error = function(e) {
+      warning_message <- conditionMessage(e)
+      failed_compare_tbl <- tibble::tibble(
+        response = response_name,
+        model_id = NA_character_,
+        model_label = NA_character_,
+        status = "response_failed",
+        nobs = NA_integer_,
+        AIC = NA_real_,
+        BIC = NA_real_,
+        logLik = NA_real_,
+        converged = NA,
+        pdHess = NA,
+        warning_message = warning_message,
+        delta_AIC = NA_real_,
+        uses_depth = NA,
+        depth_mode = NA_character_,
+        random_mode = NA_character_,
+        fixed_mode = NA_character_
+      )
+
+      failed_best_tbl <- tibble::tibble(
+        response = response_name,
+        best_model_id = NA_character_,
+        best_model_label = NA_character_,
+        AIC = NA_real_,
+        delta_AIC = NA_real_,
+        nobs_compare = NA_integer_,
+        uses_depth = NA,
+        depth_mode = NA_character_,
+        random_mode = NA_character_,
+        fixed_mode = NA_character_,
+        compare_dataset_rows = NA_integer_,
+        final_dataset_rows = NA_integer_
+      )
+
+      compare_csv_path <- file.path("output", "tables", paste0("aic_compare_", response_name, ".csv"))
+      readr::write_csv(failed_compare_tbl, compare_csv_path)
+
+      all_compare_results_tbl <<- dplyr::bind_rows(all_compare_results_tbl, failed_compare_tbl)
+      best_model_table_tbl <<- dplyr::bind_rows(best_model_table_tbl, failed_best_tbl)
+
+      cat("response =", response_name, "| failed =", warning_message, "\n")
+      cat("response =", response_name, "| saved file paths =", compare_csv_path, "\n")
+
+      list(
+        response = response_name,
+        compare_tbl = NULL,
+        final_tbl = NULL,
+        compare_results_tbl = failed_compare_tbl,
+        best_model_table_row = failed_best_tbl,
+        best_model_summary_row = NULL
+      )
+    }
   )
 
-  model_manifest_tbl <- dplyr::bind_rows(
-    model_manifest_tbl,
-    tibble::tibble(
-      response = spec_i$response,
-      result_group = spec_i$result_group,
-      depth_flag = spec_i$depth_flag,
-      area_vessel_flag = spec_i$area_vessel_flag,
-      status = "completed",
-      model_path = model_path_i,
-      emm_year_path = emm_path_i,
-      row_summary_path = row_summary_path_i,
-      index_fig_path = index_fig_path_i,
-      index_ci_fig_path = index_ci_fig_path_i,
-      raw_cpue_table_path = if (isTRUE(spec_i$include_raw_cpue)) raw_cpue_table_path_i else NA_character_,
-      raw_cpue_fig_path = if (isTRUE(spec_i$include_raw_cpue)) raw_cpue_fig_path_i else NA_character_,
-      warning_message = fit_out_i$warning_message
-    )
-  )
-
-  cat("analysis =", spec_i$result_group, "| response =", spec_i$response, "|", spec_i$depth_flag, "|", spec_i$area_vessel_flag, "\n")
-  cat("saved model =", model_path_i, "\n")
-  cat("saved year index =", index_fig_path_i, "\n")
-  cat("saved year index ci =", index_ci_fig_path_i, "\n")
-  if (isTRUE(spec_i$include_raw_cpue)) {
-    cat("saved raw annual CPUE =", raw_cpue_fig_path_i, "\n")
-  }
+  workflow_results[[response_name]] <- response_result
 }
 
-readr::write_csv(model_summary_tbl, model_summary_path)
-readr::write_csv(model_manifest_tbl, model_manifest_path)
-readr::write_csv(raw_cpue_manifest_tbl, raw_cpue_manifest_path)
-readr::write_csv(model_summary_tbl, variance_summary_path)
-readr::write_csv(model_manifest_tbl, run_status_path)
+readr::write_csv(all_compare_results_tbl, path_aic_compare_all)
+readr::write_csv(best_model_table_tbl, path_best_model_table)
+readr::write_csv(best_model_summary_tbl, path_best_model_summary)
+saveRDS(
+  list(
+    depth_boundary_info = depth_boundary_info,
+    all_compare_results = all_compare_results_tbl,
+    best_model_table = best_model_table_tbl,
+    best_model_summary = best_model_summary_tbl,
+    per_response = workflow_results
+  ),
+  path_results_rds
+)
 
-cat("main results = size-specific depth0 av0 year indices: chu, dai, toku, tokudai\n")
-cat("sub results = total depth0/depth1 and size-specific depth1 year indices\n")
-cat("sensitivity results = Area/Vessel models saved separately with av1 in file names\n")
+cat("saved csv path =", path_depth_definition, "\n")
+cat("saved csv path =", path_depth_summary, "\n")
+cat("saved csv path =", path_aic_compare_all, "\n")
+cat("saved csv path =", path_best_model_table, "\n")
+cat("saved csv path =", path_best_model_summary, "\n")
+cat("saved rds path =", path_results_rds, "\n")
+cat("GLMM workflow completed.\n")
