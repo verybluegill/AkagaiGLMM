@@ -140,29 +140,87 @@ load_area_geometry_from_check_points <- function(check_points_path = get_akagai_
 }
 
 make_plot_data_area_diff <- function(clean_dat) {
-  target_sizes <- c("tokudai", "toku", "dai", "medium")
+  target_sizes <- c("medium", "dai", "toku", "tokudai")
 
-  area_sum <- clean_dat |>
-    dplyr::filter(!is.na(.data$year), !is.na(.data$area), .data$size %in% target_sizes) |>
-    dplyr::group_by(.data$year, .data$area, .data$size) |>
-    dplyr::summarise(value = sum(.data$count, na.rm = TRUE), .groups = "drop") |>
+  area_year_size <- clean_dat |>
+    dplyr::filter(.data$year %in% 2020:2024, !is.na(.data$area), .data$size %in% target_sizes) |>
+    dplyr::group_by(.data$size, .data$year, .data$area) |>
+    dplyr::summarise(value = sum(.data$count, na.rm = TRUE), .groups = "drop")
+
+  split_tbl <- split(area_year_size, area_year_size$size)
+
+  for (size_id in target_sizes) {
+    tbl_i <- split_tbl[[size_id]] %||% tibble::tibble()
+    cat("nrow(area_year_by_size[[", size_id, "]]) =", nrow(tbl_i), "\n", sep = "")
+    if (nrow(tbl_i) > 0) {
+      print(utils::head(dplyr::distinct(tbl_i, .data$size, .data$year, .data$area, .data$value)))
+    }
+  }
+
+  identical_check <- utils::combn(target_sizes, 2, simplify = FALSE, FUN = function(pair_i) {
+    x_tbl <- split_tbl[[pair_i[[1]]]] %||% tibble::tibble()
+    y_tbl <- split_tbl[[pair_i[[2]]]] %||% tibble::tibble()
+
+    x_cmp <- x_tbl |>
+      dplyr::arrange(.data$year, .data$area) |>
+      dplyr::select("year", "area", "value")
+    y_cmp <- y_tbl |>
+      dplyr::arrange(.data$year, .data$area) |>
+      dplyr::select("year", "area", "value")
+
+    tibble::tibble(
+      size_x = pair_i[[1]],
+      size_y = pair_i[[2]],
+      identical = identical(x_cmp, y_cmp),
+      all_equal = isTRUE(all.equal(x_cmp, y_cmp))
+    )
+  }) |>
+    dplyr::bind_rows()
+
+  cat("identical check between size tables =\n")
+  print(identical_check)
+
+  if (any(identical_check$identical | identical_check$all_equal)) {
+    warning("一部の size 別 area-year 集計が同一です。size 集計を再確認してください。")
+  }
+
+  metrics_tbl <- area_year_size |>
     dplyr::arrange(.data$size, .data$area, .data$year) |>
     dplyr::group_by(.data$size, .data$area) |>
     dplyr::mutate(
       value_tminus1 = dplyr::lag(.data$value),
+      diff_abs = .data$value - .data$value_tminus1,
+      diff_log = log1p(.data$value) - log1p(.data$value_tminus1),
+      diff_sym_pct = 100 * (.data$value - .data$value_tminus1) / pmax((abs(.data$value) + abs(.data$value_tminus1)) / 2, 1),
       diff_pct = 100 * (.data$value - .data$value_tminus1) / pmax(abs(.data$value_tminus1), 1e-6)
     ) |>
     dplyr::ungroup()
 
-  cat("diff_pct summary =\n")
-  print(summary(area_sum$diff_pct))
+  cat("diff_log summary =\n")
+  print(summary(metrics_tbl$diff_log))
 
-  area_sum
+  comparison_tbl <- metrics_tbl |>
+    dplyr::select("size", "year", "area", "value", "value_tminus1", "diff_abs", "diff_log", "diff_sym_pct", "diff_pct")
+  save_check_table(comparison_tbl, file.path("output", "check_tables", "area_yoy_metrics_comparison.csv"))
+
+  for (size_id in target_sizes) {
+    save_check_table(
+      comparison_tbl |>
+        dplyr::filter(.data$size == size_id),
+      file.path("output", "check_tables", paste0("area_yoy_metrics_", size_id, ".csv"))
+    )
+  }
+
+  metrics_tbl
 }
 
 plot_area_map_diff <- function(plot_data, geometry_info, size_id, output_png) {
   plot_df <- plot_data |>
-    dplyr::filter(.data$size == size_id)
+    dplyr::filter(.data$size == size_id, .data$year %in% 2021:2024, !is.na(.data$year))
+
+  cat("plot filter target size =", size_id, "\n")
+  cat("nrow after filter(size == target_size) =", nrow(plot_df), "\n")
+  print(utils::head(dplyr::distinct(plot_df, .data$size, .data$year, .data$area, .data$value)))
 
   if (nrow(plot_df) == 0) {
     placeholder <- ggplot2::ggplot() +
@@ -177,6 +235,10 @@ plot_area_map_diff <- function(plot_data, geometry_info, size_id, output_png) {
     return(invisible(NULL))
   }
 
+  fill_limits <- max(abs(stats::quantile(plot_df$diff_log, probs = c(0.02, 0.98), na.rm = TRUE)))
+  fill_limits <- ifelse(is.finite(fill_limits) && fill_limits > 0, fill_limits, max(abs(plot_df$diff_log), na.rm = TRUE))
+  fill_limits <- ifelse(is.finite(fill_limits) && fill_limits > 0, fill_limits, 1)
+
   size_label_en <- dplyr::case_when(
     size_id == "tokudai" ~ "Extra large",
     size_id == "toku" ~ "Special",
@@ -188,30 +250,33 @@ plot_area_map_diff <- function(plot_data, geometry_info, size_id, output_png) {
   if (identical(geometry_info$geometry_type, "polygon") && !is.null(geometry_info$polygon_sf)) {
     map_sf <- geometry_info$polygon_sf |>
       dplyr::left_join(plot_df, by = "area")
+    cat("nrow after geometry join =", nrow(map_sf), "\n")
 
     p <- ggplot2::ggplot(map_sf) +
-      ggplot2::geom_sf(ggplot2::aes(fill = .data$diff_pct), color = "grey55", linewidth = 0.25) +
+      ggplot2::geom_sf(ggplot2::aes(fill = scales::squish(.data$diff_log, range = c(-fill_limits, fill_limits))), color = "grey55", linewidth = 0.25) +
       ggplot2::facet_wrap(~year) +
       ggplot2::scale_fill_gradient2(
         low = "#D73027",
         mid = "white",
         high = "#2166AC",
         midpoint = 0,
-        labels = scales::label_number(accuracy = 1),
+        limits = c(-fill_limits, fill_limits),
+        oob = scales::squish,
         na.value = "grey90"
       ) +
       ggplot2::labs(
         title = paste("Area-wise year-on-year change:", size_label_en),
         x = "Longitude",
         y = "Latitude",
-        fill = "YoY change (%)"
+        fill = "YoY log-change"
       ) +
       theme_akagai_report()
   } else {
     tile_df <- geometry_info$tile_layout |>
       dplyr::left_join(plot_df, by = "area")
+    cat("nrow after geometry join =", nrow(tile_df), "\n")
 
-    p <- ggplot2::ggplot(tile_df, ggplot2::aes(x = .data$x, y = .data$y, fill = .data$diff_pct)) +
+    p <- ggplot2::ggplot(tile_df, ggplot2::aes(x = .data$x, y = .data$y, fill = scales::squish(.data$diff_log, range = c(-fill_limits, fill_limits)))) +
       ggplot2::geom_tile(color = "grey55", linewidth = 0.35) +
       ggplot2::geom_text(ggplot2::aes(label = .data$area), size = 3) +
       ggplot2::facet_wrap(~year) +
@@ -220,14 +285,15 @@ plot_area_map_diff <- function(plot_data, geometry_info, size_id, output_png) {
         mid = "white",
         high = "#2166AC",
         midpoint = 0,
-        labels = scales::label_number(accuracy = 1),
+        limits = c(-fill_limits, fill_limits),
+        oob = scales::squish,
         na.value = "grey90"
       ) +
       ggplot2::labs(
         title = paste("Area-wise year-on-year change:", size_label_en),
         x = "Tile X",
         y = "Tile Y",
-        fill = "YoY change (%)"
+        fill = "YoY log-change"
       ) +
       theme_akagai_report()
   }

@@ -20,7 +20,7 @@ size_id_to_label_en <- function(size_id) {
 
 make_plot_data_total <- function(clean_dat) {
   clean_dat |>
-    dplyr::filter(!is.na(.data$year)) |>
+    dplyr::filter(.data$year %in% 2020:2024) |>
     dplyr::group_by(.data$year) |>
     dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
 }
@@ -29,7 +29,7 @@ make_plot_data_by_size <- function(clean_dat) {
   size_order <- c("medium", "dai", "toku", "tokudai")
 
   clean_dat |>
-    dplyr::filter(!is.na(.data$year), .data$size %in% size_order) |>
+    dplyr::filter(.data$year %in% 2020:2024, .data$size %in% size_order) |>
     dplyr::group_by(.data$year, .data$size) |>
     dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop") |>
     dplyr::mutate(
@@ -42,7 +42,7 @@ plot_annual_total <- function(plot_data, output_png = file.path("output", "figur
   p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .data$year, y = .data$total_count)) +
     ggplot2::geom_line(linewidth = 1.2, color = "#2166AC") +
     ggplot2::geom_point(size = 2.8, color = "#2166AC") +
-    ggplot2::scale_x_continuous(breaks = sort(unique(plot_data$year))) +
+    ggplot2::scale_x_continuous(breaks = 2020:2024, limits = c(2020, 2024)) +
     ggplot2::scale_y_continuous(labels = scales::comma) +
     ggplot2::labs(
       title = "Annual trend of total abundance",
@@ -66,7 +66,7 @@ plot_annual_by_size <- function(plot_data, output_png = file.path("output", "fig
   p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .data$year, y = .data$total_count, color = .data$size_label, group = .data$size_label)) +
     ggplot2::geom_line(linewidth = 1.15) +
     ggplot2::geom_point(size = 2.5) +
-    ggplot2::scale_x_continuous(breaks = sort(unique(plot_data$year))) +
+    ggplot2::scale_x_continuous(breaks = 2020:2024, limits = c(2020, 2024)) +
     ggplot2::scale_y_continuous(labels = scales::comma) +
     ggplot2::scale_color_manual(
       values = c(

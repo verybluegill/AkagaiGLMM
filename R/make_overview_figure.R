@@ -1,22 +1,34 @@
 # =========================================
 # make_overview_figure.R
-# Excel 直読みによるデータ概要図と概要テーブルを作成する
+# Excel 直読みによるデータ概要図と診断用チェック出力を作成する
 # =========================================
 
 source(file.path("R", "00_load_packages.R"))
 
 load_project_packages(
-  required_pkgs = c("dplyr", "ggplot2", "readr", "readxl", "stringr", "tidyr", "tibble", "scales"),
+  required_pkgs = c("dplyr", "ggplot2", "lubridate", "readr", "readxl", "stringr", "tidyr", "tibble", "scales"),
   optional_pkgs = character()
 )
 
 ensure_project_dirs()
+dir.create(file.path("output", "check_tables"), showWarnings = FALSE, recursive = TRUE)
 
 get_akagai_default_paths <- function() {
   list(
     excel_path = file.path("ActualData", "Akagai_sheet.xlsx"),
     check_points_path = file.path("PrepareDummyData", "check_points.R")
   )
+}
+
+get_akagai_analysis_period <- function() {
+  c(as.Date("2020-09-01"), as.Date("2024-06-30"))
+}
+
+`%||%` <- function(x, y) {
+  if (is.null(x)) {
+    return(y)
+  }
+  x
 }
 
 clean_name_for_display <- function(x) {
@@ -49,44 +61,9 @@ print_vector_diagnostic <- function(label, x) {
   cat(label, "=", paste(x, collapse = " | "), "\n")
 }
 
-find_column_by_candidates <- function(data, candidates) {
-  raw_names <- names(data)
-  raw_display <- clean_name_for_display(raw_names)
-  norm_names <- clean_name_for_match(raw_names)
-  candidate_display <- clean_name_for_display(candidates)
-  norm_candidates <- clean_name_for_match(candidates)
-
-  exact_raw_idx <- match(candidate_display, raw_display, nomatch = 0L)
-  exact_raw_idx <- exact_raw_idx[exact_raw_idx > 0]
-
-  if (length(exact_raw_idx) > 0) {
-    return(raw_names[[exact_raw_idx[[1]]]])
-  }
-
-  exact_idx <- match(norm_candidates, norm_names, nomatch = 0L)
-  exact_idx <- exact_idx[exact_idx > 0]
-
-  if (length(exact_idx) > 0) {
-    return(raw_names[[exact_idx[[1]]]])
-  }
-
-  for (cand in candidate_display) {
-    hit <- which(vapply(raw_display, function(nm) grepl(cand, nm, fixed = TRUE), logical(1)))
-
-    if (length(hit) > 0) {
-      return(raw_names[[hit[[1]]]])
-    }
-  }
-
-  for (cand in norm_candidates) {
-    hit <- which(stringr::str_detect(norm_names, stringr::fixed(cand)))
-
-    if (length(hit) > 0) {
-      return(raw_names[[hit[[1]]]])
-    }
-  }
-
-  NULL
+save_check_table <- function(data, path) {
+  readr::write_csv(data, path)
+  cat("saved:", path, "\n")
 }
 
 find_column_by_regex <- function(data, patterns) {
@@ -103,16 +80,28 @@ find_column_by_regex <- function(data, patterns) {
   NULL
 }
 
+size_id_to_label <- function(size_id) {
+  dplyr::case_when(
+    size_id == "tokudai" ~ "特大",
+    size_id == "toku" ~ "特",
+    size_id == "dai" ~ "大",
+    size_id == "medium" ~ "中",
+    size_id == "waregai" ~ "割貝",
+    size_id == "sho" ~ "小",
+    size_id == "shosho" ~ "小々",
+    TRUE ~ as.character(size_id)
+  )
+}
+
 find_size_columns <- function(data) {
   raw_names <- names(data)
-
   size_patterns <- c(
     tokudai = "特大|8\\.6",
     toku = "特\\(|特\\)|8\\.1|8\\.5",
     dai = "大\\(|大\\)|7\\.6|8\\.0",
     medium = "中\\(|中\\)|7\\.1|7\\.5",
     waregai = "割れ?貝|割貝",
-    sho = "小\\(|5\\.1|7\\.0",
+    sho = "小\\(|7\\.0|5\\.1",
     shosho = "小小|小々|5\\.0"
   )
 
@@ -131,58 +120,17 @@ find_size_columns <- function(data) {
 
 standardize_size_value <- function(x) {
   x_chr <- clean_name_for_display(x)
-  out <- dplyr::case_when(
+
+  dplyr::case_when(
     stringr::str_detect(x_chr, "特大|8\\.6") ~ "tokudai",
     stringr::str_detect(x_chr, "特|8\\.1|8\\.5") ~ "toku",
     stringr::str_detect(x_chr, "大|7\\.6|8\\.0") ~ "dai",
     stringr::str_detect(x_chr, "中|7\\.1|7\\.5") ~ "medium",
     stringr::str_detect(x_chr, "割れ?貝|割貝") ~ "waregai",
     stringr::str_detect(x_chr, "小小|小々|5\\.0") ~ "shosho",
-    stringr::str_detect(x_chr, "小|5\\.1|7\\.0") ~ "sho",
+    stringr::str_detect(x_chr, "小|7\\.0|5\\.1") ~ "sho",
     TRUE ~ NA_character_
   )
-  out
-}
-
-size_id_to_label <- function(size_id) {
-  dplyr::case_when(
-    size_id == "tokudai" ~ "特大",
-    size_id == "toku" ~ "特",
-    size_id == "dai" ~ "大",
-    size_id == "medium" ~ "中",
-    size_id == "waregai" ~ "割貝",
-    size_id == "sho" ~ "小",
-    size_id == "shosho" ~ "小々",
-    TRUE ~ as.character(size_id)
-  )
-}
-
-coerce_excel_like_date <- function(x) {
-  if (inherits(x, "Date")) {
-    return(x)
-  }
-
-  if (inherits(x, "POSIXt")) {
-    return(as.Date(x))
-  }
-
-  if (is.numeric(x)) {
-    out <- suppressWarnings(as.Date(x, origin = "1899-12-30"))
-    return(out)
-  }
-
-  x_chr <- trimws(as.character(x))
-  x_chr[x_chr %in% c("", "NA", "NaN")] <- NA_character_
-  out <- suppressWarnings(as.Date(x_chr))
-
-  need_retry <- is.na(out) & !is.na(x_chr)
-
-  if (any(need_retry)) {
-    x_chr2 <- gsub("[./]", "-", x_chr[need_retry])
-    out[need_retry] <- suppressWarnings(as.Date(x_chr2))
-  }
-
-  out
 }
 
 coerce_numeric_value <- function(x) {
@@ -196,28 +144,152 @@ coerce_numeric_value <- function(x) {
   suppressWarnings(as.numeric(x_chr))
 }
 
-convert_reiwa_to_gregorian <- function(year_value, year_col_name = NULL) {
+parse_date_flexibly <- function(x) {
+  if (inherits(x, "Date")) {
+    return(as.Date(x))
+  }
+
+  if (inherits(x, "POSIXt")) {
+    return(as.Date(x))
+  }
+
+  if (is.numeric(x)) {
+    return(suppressWarnings(as.Date(x, origin = "1899-12-30")))
+  }
+
+  x_chr <- trimws(as.character(x))
+  x_chr[x_chr %in% c("", "NA", "NaN")] <- NA_character_
+  out <- suppressWarnings(lubridate::ymd(x_chr, quiet = TRUE))
+
+  need_retry <- is.na(out) & !is.na(x_chr)
+  if (any(need_retry)) {
+    out[need_retry] <- suppressWarnings(as.Date(lubridate::ymd_hms(x_chr[need_retry], quiet = TRUE)))
+  }
+
+  need_retry <- is.na(out) & !is.na(x_chr)
+  if (any(need_retry)) {
+    out[need_retry] <- suppressWarnings(as.Date(lubridate::parse_date_time(
+      x_chr[need_retry],
+      orders = c("ymd", "Ymd", "Y/m/d", "Y-m-d", "Ymd HMS", "Ymd HM", "ymd HMS", "ymd HM", "Y/m/d HMS", "Y/m/d HM"),
+      quiet = TRUE
+    )))
+  }
+
+  out
+}
+
+diagnose_date_candidate_column <- function(data, col_name) {
+  x <- data[[col_name]]
+  cat("date candidate =", clean_name_for_display(col_name), "\n")
+  cat("class =", paste(class(x), collapse = " / "), "\n")
+  cat("head =\n")
+  print(utils::head(x))
+  cat("summary =\n")
+  print(summary(x))
+  cat("NA count =", sum(is.na(x)), "\n")
+}
+
+convert_year_component <- function(year_value, mode = c("auto", "gregorian", "reiwa")) {
+  mode <- match.arg(mode)
   year_num <- suppressWarnings(as.integer(year_value))
+
+  if (mode == "gregorian") {
+    return(year_num)
+  }
+
+  if (mode == "reiwa") {
+    year_num[!is.na(year_num)] <- year_num[!is.na(year_num)] + 2018L
+    return(year_num)
+  }
 
   if (all(is.na(year_num))) {
     return(year_num)
   }
 
-  year_col_name <- clean_name_for_display(year_col_name %||% "")
-  looks_reiwa <- stringr::str_detect(year_col_name, "令和|reiwa")
-
-  if (looks_reiwa || max(year_num, na.rm = TRUE) <= 30) {
+  if (max(year_num, na.rm = TRUE) <= 20) {
     year_num[!is.na(year_num)] <- year_num[!is.na(year_num)] + 2018L
   }
 
   year_num
 }
 
-`%||%` <- function(x, y) {
-  if (is.null(x)) {
-    return(y)
+make_date_from_components <- function(year_value, month_value, day_value, mode = c("auto", "gregorian", "reiwa")) {
+  year_num <- convert_year_component(year_value, mode = mode[[1]])
+  month_num <- suppressWarnings(as.integer(month_value))
+  day_num <- suppressWarnings(as.integer(day_value))
+
+  date_text <- sprintf(
+    "%04d-%02d-%02d",
+    year_num,
+    ifelse(is.na(month_num), 1L, month_num),
+    ifelse(is.na(day_num), 1L, day_num)
+  )
+
+  suppressWarnings(as.Date(date_text))
+}
+
+choose_best_date_vector <- function(candidate_list) {
+  if (length(candidate_list) == 0) {
+    return(list(name = NA_character_, date = rep(as.Date(NA), 0), success_rate = NA_real_))
   }
-  x
+
+  score_tbl <- dplyr::bind_rows(lapply(names(candidate_list), function(name_i) {
+    date_i <- candidate_list[[name_i]]
+    year_i <- suppressWarnings(as.integer(format(date_i, "%Y")))
+    tibble::tibble(
+      candidate_name = name_i,
+      success_rate = mean(!is.na(date_i)),
+      in_range_rate = mean(year_i %in% 2020:2024, na.rm = TRUE),
+      in_range_count = sum(year_i %in% 2020:2024, na.rm = TRUE)
+    )
+  }))
+
+  score_tbl <- score_tbl |>
+    dplyr::arrange(dplyr::desc(.data$in_range_count), dplyr::desc(.data$success_rate))
+
+  best_name <- score_tbl$candidate_name[[1]]
+
+  list(
+    name = best_name,
+    date = candidate_list[[best_name]],
+    success_rate = score_tbl$success_rate[[1]],
+    score_table = score_tbl
+  )
+}
+
+plot_date_parsing_check <- function(date_check_tbl, output_png = file.path("output", "figures", "date_parsing_check.png")) {
+  plot_tbl <- date_check_tbl |>
+    dplyr::mutate(row_index = dplyr::row_number())
+
+  p_raw <- ggplot2::ggplot(dplyr::filter(plot_tbl, !is.na(.data$raw_date_numeric)), ggplot2::aes(x = .data$row_index, y = .data$raw_date_numeric)) +
+    ggplot2::geom_point(size = 0.8, alpha = 0.6, color = "#4E79A7") +
+    ggplot2::labs(title = "Raw date candidate", x = "Row", y = "Raw value") +
+    theme_akagai_report(base_size = 10)
+
+  p_parsed <- ggplot2::ggplot(dplyr::filter(plot_tbl, !is.na(.data$parsed_date)), ggplot2::aes(x = .data$row_index, y = .data$parsed_date)) +
+    ggplot2::geom_point(size = 0.8, alpha = 0.6, color = "#59A14F") +
+    ggplot2::labs(title = "Parsed date", x = "Row", y = "Parsed date") +
+    theme_akagai_report(base_size = 10)
+
+  year_count_tbl <- plot_tbl |>
+    dplyr::filter(!is.na(.data$parsed_year)) |>
+    dplyr::count(.data$parsed_year, name = "n")
+
+  p_year <- ggplot2::ggplot(year_count_tbl, ggplot2::aes(x = .data$parsed_year, y = .data$n)) +
+    ggplot2::geom_col(fill = "#E15759") +
+    ggplot2::scale_x_continuous(breaks = sort(unique(year_count_tbl$parsed_year))) +
+    ggplot2::labs(title = "Parsed year counts", x = "Year", y = "Rows") +
+    theme_akagai_report(base_size = 10)
+
+  grDevices::png(output_png, width = 12, height = 10, units = "in", res = 300)
+  grid::grid.newpage()
+  grid::pushViewport(grid::viewport(layout = grid::grid.layout(3, 1)))
+  print(p_raw, vp = grid::viewport(layout.pos.row = 1, layout.pos.col = 1))
+  print(p_parsed, vp = grid::viewport(layout.pos.row = 2, layout.pos.col = 1))
+  print(p_year, vp = grid::viewport(layout.pos.row = 3, layout.pos.col = 1))
+  grDevices::dev.off()
+
+  cat("saved:", output_png, "\n")
 }
 
 load_akagai_excel <- function(excel_path = get_akagai_default_paths()$excel_path, sheet = NULL) {
@@ -263,6 +335,16 @@ clean_akagai_data <- function(dat) {
 
   raw_names <- names(dat)
   cleaned_names <- make_clean_names_local(raw_names)
+  dat <- tibble::as_tibble(dat) |>
+    dplyr::mutate(row_id = dplyr::row_number())
+
+  date_candidate_cols <- raw_names[stringr::str_detect(raw_names, stringr::regex("date|日付|操業日|曳航日|年|月|日"))]
+  date_candidate_cols <- unique(date_candidate_cols)
+  print_vector_diagnostic("date candidate columns", clean_name_for_display(date_candidate_cols))
+
+  for (col_i in date_candidate_cols) {
+    diagnose_date_candidate_column(dat, col_i)
+  }
 
   detected_cols <- list(
     date = find_column_by_regex(dat, c("(^|[^[:alpha:]])date([^[:alpha:]]|$)", "日付", "操業日", "曳航日")),
@@ -275,10 +357,9 @@ clean_akagai_data <- function(dat) {
   )
   size_col_tbl <- find_size_columns(dat)
 
-  print_vector_diagnostic("candidate date columns", clean_name_for_display(names(dat)[stringr::str_detect(names(dat), "date|日|操業|曳航")]))
-  print_vector_diagnostic("candidate area columns", clean_name_for_display(names(dat)[stringr::str_detect(names(dat), "area|漁区|漁場|区画|mesh")]))
+  print_vector_diagnostic("candidate area columns", clean_name_for_display(raw_names[stringr::str_detect(raw_names, "漁区|漁場|区画|mesh")]))
   print_vector_diagnostic("candidate size columns", clean_name_for_display(size_col_tbl$size_col))
-  print_vector_diagnostic("candidate count columns", clean_name_for_display(names(dat)[stringr::str_detect(names(dat), "count|個体|採取|尾数|数")]))
+  print_vector_diagnostic("candidate count columns", clean_name_for_display(raw_names[stringr::str_detect(raw_names, "個体数|採取個体数|尾数|漁獲個数|count")]))
   cat("detected date column =", clean_name_for_display(detected_cols$date %||% NA_character_), "\n")
   cat("detected year column =", clean_name_for_display(detected_cols$year %||% NA_character_), "\n")
   cat("detected month column =", clean_name_for_display(detected_cols$month %||% NA_character_), "\n")
@@ -287,92 +368,138 @@ clean_akagai_data <- function(dat) {
   cat("detected size column =", clean_name_for_display(detected_cols$size %||% NA_character_), "\n")
   cat("detected count column =", clean_name_for_display(detected_cols$count %||% NA_character_), "\n")
 
-  dat <- tibble::as_tibble(dat) |>
-    dplyr::mutate(row_id = dplyr::row_number())
+  date_candidates <- list()
 
-  if (!is.null(detected_cols$year)) {
-    year_vec <- convert_reiwa_to_gregorian(dat[[detected_cols$year]], detected_cols$year)
+  if (!is.null(detected_cols$date)) {
+    date_candidates[[paste0("direct:", detected_cols$date)]] <- parse_date_flexibly(dat[[detected_cols$date]])
+  }
+
+  if (!is.null(detected_cols$year) && !is.null(detected_cols$month) && !is.null(detected_cols$day)) {
+    date_candidates[["ymd_gregorian"]] <- make_date_from_components(
+      dat[[detected_cols$year]],
+      dat[[detected_cols$month]],
+      dat[[detected_cols$day]],
+      mode = "gregorian"
+    )
+    date_candidates[["ymd_reiwa"]] <- make_date_from_components(
+      dat[[detected_cols$year]],
+      dat[[detected_cols$month]],
+      dat[[detected_cols$day]],
+      mode = "reiwa"
+    )
+  }
+
+  chosen_date <- choose_best_date_vector(date_candidates)
+  parsed_date <- chosen_date$date
+  parsed_year <- suppressWarnings(as.integer(format(parsed_date, "%Y")))
+  parsed_month <- suppressWarnings(as.integer(format(parsed_date, "%m")))
+
+  cat("date parse success rate =", round(chosen_date$success_rate, 4), "\n")
+  if (!is.null(chosen_date$score_table)) {
+    print(chosen_date$score_table)
+  }
+  if (all(is.na(parsed_date))) {
+    cat("min(date) = NA\n")
+    cat("max(date) = NA\n")
   } else {
-    year_vec <- rep(NA_integer_, nrow(dat))
+    cat("min(date) =", format(min(parsed_date, na.rm = TRUE)), "\n")
+    cat("max(date) =", format(max(parsed_date, na.rm = TRUE)), "\n")
   }
+  cat("raw year table =\n")
+  print(table(parsed_year, useNA = "ifany"))
 
-  month_vec <- if (!is.null(detected_cols$month)) suppressWarnings(as.integer(dat[[detected_cols$month]])) else rep(NA_integer_, nrow(dat))
-  day_vec <- if (!is.null(detected_cols$day)) suppressWarnings(as.integer(dat[[detected_cols$day]])) else rep(NA_integer_, nrow(dat))
-  date_vec <- if (!is.null(detected_cols$date)) coerce_excel_like_date(dat[[detected_cols$date]]) else rep(as.Date(NA), nrow(dat))
+  date_check_tbl <- tibble::tibble(
+    row_id = dat$row_id,
+    date_candidate_name = chosen_date$name,
+    raw_date_value = if (!is.null(detected_cols$date)) as.character(dat[[detected_cols$date]]) else NA_character_,
+    raw_date_numeric = if (!is.null(detected_cols$date)) coerce_numeric_value(dat[[detected_cols$date]]) else NA_real_,
+    parsed_date = parsed_date,
+    parsed_year = parsed_year
+  )
+  save_check_table(date_check_tbl, file.path("output", "check_tables", "date_parsing_check.csv"))
+  plot_date_parsing_check(date_check_tbl)
 
-  if (all(is.na(date_vec)) && any(!is.na(year_vec))) {
-    month_fill <- ifelse(is.na(month_vec), 1L, month_vec)
-    day_fill <- ifelse(is.na(day_vec), 1L, day_vec)
-    date_text <- sprintf("%04d-%02d-%02d", year_vec, month_fill, day_fill)
-    date_vec <- suppressWarnings(as.Date(date_text))
-  }
+  suspicious_year_rows <- dat |>
+    dplyr::mutate(parsed_date = parsed_date, year = parsed_year) |>
+    dplyr::filter(!is.na(.data$year), !(.data$year %in% 2020:2024))
+  suspicious_years <- sort(unique(stats::na.omit(suspicious_year_rows$year)))
+  print_vector_diagnostic("suspicious years", suspicious_years)
+  save_check_table(suspicious_year_rows, file.path("output", "check_tables", "suspicious_year_rows.csv"))
 
-  if (all(is.na(year_vec)) && any(!is.na(date_vec))) {
-    year_vec <- as.integer(format(date_vec, "%Y"))
-  }
+  year_na_rows <- dat |>
+    dplyr::mutate(parsed_date = parsed_date, year = parsed_year) |>
+    dplyr::filter(is.na(.data$year))
+  save_check_table(year_na_rows, file.path("output", "check_tables", "year_na_rows.csv"))
 
-  if (all(is.na(month_vec)) && any(!is.na(date_vec))) {
-    month_vec <- as.integer(format(date_vec, "%m"))
-  }
+  analysis_period <- get_akagai_analysis_period()
+  suspicious_date_rows <- dat |>
+    dplyr::mutate(parsed_date = parsed_date, year = parsed_year) |>
+    dplyr::filter(!is.na(.data$parsed_date), (.data$parsed_date < analysis_period[[1]] | .data$parsed_date > analysis_period[[2]]))
+  save_check_table(suspicious_date_rows, file.path("output", "check_tables", "suspicious_date_rows.csv"))
 
-  area_vec <- if (!is.null(detected_cols$area)) dat[[detected_cols$area]] else rep(NA, nrow(dat))
-  area_vec <- clean_name_for_display(area_vec)
+  filtered_row_id <- dat |>
+    dplyr::mutate(year = parsed_year, parsed_date = parsed_date) |>
+    dplyr::filter(.data$year %in% 2020:2024, !is.na(.data$parsed_date), .data$parsed_date >= analysis_period[[1]], .data$parsed_date <= analysis_period[[2]]) |>
+    dplyr::pull(.data$row_id)
+
+  cat("filtered year table =\n")
+  print(table(parsed_year[dat$row_id %in% filtered_row_id], useNA = "ifany"))
+
+  area_vec <- if (!is.null(detected_cols$area)) clean_name_for_display(dat[[detected_cols$area]]) else rep(NA_character_, nrow(dat))
   area_vec[area_vec == ""] <- NA_character_
 
-  if (!is.null(detected_cols$size) && !is.null(detected_cols$count)) {
-    clean_dat <- dat |>
+  size_structure <- if (!is.null(detected_cols$size) && !is.null(detected_cols$count)) "long" else if (nrow(size_col_tbl) > 0) "wide" else "unknown"
+  cat("detected size structure =", size_structure, "\n")
+  print_vector_diagnostic("size columns used", clean_name_for_display(size_col_tbl$size_col))
+
+  if (identical(size_structure, "long")) {
+    clean_dat_all <- dat |>
       dplyr::transmute(
         row_id = .data$row_id,
-        date = date_vec,
-        year = year_vec,
-        month = month_vec,
+        date = parsed_date,
+        year = parsed_year,
+        month = parsed_month,
         area = area_vec,
         size = standardize_size_value(.data[[detected_cols$size]]),
         size_raw = clean_name_for_display(.data[[detected_cols$size]]),
         count = coerce_numeric_value(.data[[detected_cols$count]])
       )
-  } else if (nrow(size_col_tbl) > 0) {
-    clean_dat <- dat |>
+  } else if (identical(size_structure, "wide")) {
+    wide_before_total <- sum(vapply(size_col_tbl$size_col, function(col_i) sum(coerce_numeric_value(dat[[col_i]]), na.rm = TRUE), numeric(1)))
+    cat("wide nrow before =", nrow(dat), "\n")
+    cat("wide total before =", wide_before_total, "\n")
+
+    long_dat <- dat |>
       dplyr::select(dplyr::all_of(c("row_id", size_col_tbl$size_col))) |>
       tidyr::pivot_longer(
         cols = dplyr::all_of(size_col_tbl$size_col),
         names_to = "size_source_col",
-        values_to = "count",
-        values_transform = list(count = as.character)
+        values_to = "count_raw",
+        values_transform = list(count_raw = as.character)
       ) |>
-      dplyr::left_join(
-        size_col_tbl,
-        by = c("size_source_col" = "size_col")
-      ) |>
-      dplyr::mutate(
-        date = date_vec[match(.data$row_id, dat$row_id)],
-        year = year_vec[match(.data$row_id, dat$row_id)],
-        month = month_vec[match(.data$row_id, dat$row_id)],
-        area = area_vec[match(.data$row_id, dat$row_id)],
-        size_raw = clean_name_for_display(.data$size_source_col),
-        count = coerce_numeric_value(.data$count)
-      ) |>
+      dplyr::left_join(size_col_tbl, by = c("size_source_col" = "size_col"))
+
+    cat("wide nrow after pivot_longer =", nrow(long_dat), "\n")
+    cat("wide total after =", sum(coerce_numeric_value(long_dat$count_raw), na.rm = TRUE), "\n")
+
+    clean_dat_all <- long_dat |>
       dplyr::transmute(
         row_id = .data$row_id,
-        date = .data$date,
-        year = .data$year,
-        month = .data$month,
-        area = .data$area,
+        date = parsed_date[match(.data$row_id, dat$row_id)],
+        year = parsed_year[match(.data$row_id, dat$row_id)],
+        month = parsed_month[match(.data$row_id, dat$row_id)],
+        area = area_vec[match(.data$row_id, dat$row_id)],
         size = .data$size_id,
-        size_raw = .data$size_raw,
-        count = .data$count
+        size_raw = clean_name_for_display(.data$size_source_col),
+        count = coerce_numeric_value(.data$count_raw)
       )
   } else {
-    cat("想定列が不明なため、候補列名を再掲します。\n")
-    print_vector_diagnostic("raw names", clean_name_for_display(raw_names))
-    print(utils::head(dat))
-    str(dat)
-
-    clean_dat <- tibble::tibble(
+    cat("サイズ構造を判定できませんでした。\n")
+    clean_dat_all <- tibble::tibble(
       row_id = dat$row_id,
-      date = date_vec,
-      year = year_vec,
-      month = month_vec,
+      date = parsed_date,
+      year = parsed_year,
+      month = parsed_month,
       area = area_vec,
       size = NA_character_,
       size_raw = NA_character_,
@@ -380,24 +507,41 @@ clean_akagai_data <- function(dat) {
     )
   }
 
-  clean_dat <- clean_dat |>
+  clean_dat_all <- clean_dat_all |>
     dplyr::mutate(
-      area = ifelse(is.na(.data$area) | .data$area == "", NA_character_, .data$area),
       count = dplyr::if_else(is.na(.data$count), 0, .data$count),
       size_label = size_id_to_label(.data$size)
     )
 
-  column_map <- tibble::tibble(
-    internal_name = c("date", "year", "month", "area", "size", "count"),
-    raw_column = c(
-      detected_cols$date %||% NA_character_,
-      detected_cols$year %||% NA_character_,
-      detected_cols$month %||% NA_character_,
-      detected_cols$area %||% NA_character_,
-      detected_cols$size %||% paste(size_col_tbl$size_col, collapse = " | "),
-      detected_cols$count %||% NA_character_
-    )
+  size_year_totals_long <- clean_dat_all |>
+    dplyr::filter(.data$row_id %in% filtered_row_id, !is.na(.data$size)) |>
+    dplyr::group_by(.data$size, .data$size_label, .data$year) |>
+    dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
+  save_check_table(size_year_totals_long, file.path("output", "check_tables", "size_year_totals_long.csv"))
+
+  size_year_area_totals_long <- clean_dat_all |>
+    dplyr::filter(.data$row_id %in% filtered_row_id, !is.na(.data$size), !is.na(.data$area)) |>
+    dplyr::group_by(.data$size, .data$size_label, .data$year, .data$area) |>
+    dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
+  save_check_table(size_year_area_totals_long, file.path("output", "check_tables", "size_year_area_totals_long.csv"))
+
+  size_year_totals_wide <- size_year_totals_long |>
+    dplyr::select("year", "size_label", "total_count") |>
+    tidyr::pivot_wider(names_from = "size_label", values_from = "total_count")
+  save_check_table(size_year_totals_wide, file.path("output", "check_tables", "size_year_totals_wide.csv"))
+
+  cat("each size total =\n")
+  print(
+    clean_dat_all |>
+      dplyr::filter(.data$row_id %in% filtered_row_id, !is.na(.data$size_label)) |>
+      dplyr::group_by(.data$size_label) |>
+      dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
   )
+  cat("year x size table =\n")
+  print(size_year_totals_long)
+
+  clean_dat <- clean_dat_all |>
+    dplyr::filter(.data$row_id %in% filtered_row_id)
 
   date_range_text <- if (all(is.na(clean_dat$date))) "NA to NA" else paste(range(clean_dat$date, na.rm = TRUE), collapse = " to ")
   cat("date range =", date_range_text, "\n")
@@ -408,17 +552,8 @@ clean_akagai_data <- function(dat) {
     dplyr::filter(!is.na(.data$size)) |>
     dplyr::group_by(.data$size_label) |>
     dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
-
   cat("overview_size_totals =\n")
   print(overview_size_totals)
-
-  cat("year x size counts\n")
-  print(
-    clean_dat |>
-      dplyr::filter(!is.na(.data$year), !is.na(.data$size)) |>
-      dplyr::group_by(.data$year, .data$size_label) |>
-      dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
-  )
 
   cat("year x area counts\n")
   print(
@@ -428,9 +563,22 @@ clean_akagai_data <- function(dat) {
       dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
   )
 
+  column_map <- tibble::tibble(
+    internal_name = c("date", "year", "month", "area", "size", "count"),
+    raw_column = c(
+      chosen_date$name %||% NA_character_,
+      detected_cols$year %||% NA_character_,
+      detected_cols$month %||% NA_character_,
+      detected_cols$area %||% NA_character_,
+      detected_cols$size %||% paste(size_col_tbl$size_col, collapse = " | "),
+      detected_cols$count %||% NA_character_
+    )
+  )
+
   attr(clean_dat, "column_map") <- column_map
   attr(clean_dat, "raw_names") <- raw_names
   attr(clean_dat, "cleaned_names") <- cleaned_names
+  attr(clean_dat, "size_structure") <- size_structure
   clean_dat
 }
 
@@ -585,9 +733,7 @@ run_make_overview_figure <- function() {
   summary_csv <- summary_data$summary_tbl |>
     dplyr::select("size_label", "total_count")
 
-  readr::write_csv(summary_csv, file.path("output", "tables", "data_overview_summary.csv"))
-  cat("saved:", file.path("output", "tables", "data_overview_summary.csv"), "\n")
-
+  save_check_table(summary_csv, file.path("output", "tables", "data_overview_summary.csv"))
   plot_overview_summary(
     summary_data = summary_data,
     output_png = file.path("output", "figures", "data_overview_summary.png")
