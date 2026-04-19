@@ -1,35 +1,39 @@
 # AkagaiGLMM
 
-## Overview
+## 概要
 
-This repository contains the analysis workflow for CPUE standardization and visualization based on akagai fishing logbook data from the Watahama Fisheries Cooperative Association (渡波漁船組合).
+このリポジトリは、渡波漁船組合のアカガイ操業日誌データに基づいて、CPUE（単位努力量あたり漁獲量）の標準化および可視化を行うための解析ワークフローをまとめたものです。
 
-The scripts in this repository are used to:
+このリポジトリに含まれるスクリプトは、以下の目的で使用されます：
 
-- check raw logbook data
-- clean and restructure the data for analysis
-- fit GLMMs for CPUE standardization
-- compare candidate models
-- export tables and figures for interpretation and reporting
+* 操業日誌の生データのチェック
+* 解析のためのデータのクリーニングおよび再構造化
+* CPUE標準化のためのGLMM（一般化線形混合モデル）の当てはめ
+* 候補モデルの比較
+* 解釈および報告のための表および図の出力
 
-This is a research code repository prepared for public sharing. The main intended readers are collaborators, but the structure and outputs are also described for external readers.
+本リポジトリは、公開を前提として整備された研究用コードです。主な想定読者は共同研究者ですが、外部の閲覧者にも理解できるよう、構造および出力内容についても説明を記載しています。
 
-## Analysis flow
+---
 
-Run the scripts manually, one by one, in the following order:
+## 解析フロー
+
+以下の順序で、スクリプトを1本ずつ手動で実行してください：
 
 `01_check_raw_data.R` → `02_make_clean_data_and_figures.R` → `03_fit_glmm_models.R`
 
-What each step does:
+各ステップの内容：
 
-- `R/01_check_raw_data.R`
-  reads `ActualData/Akagai_sheet.xlsx`, checks raw values, and writes check tables and check figures to `output/`
-- `R/02_make_clean_data_and_figures.R`
-  reads the check tables, creates cleaned datasets for downstream analysis, and writes additional summary tables and figures
-- `R/03_fit_glmm_models.R`
-  reads `data_processed/akagai_glmm_input.csv`, fits candidate GLMMs, compares models by AIC, and exports standardized indices and comparison figures
+* `R/01_check_raw_data.R`
+  `ActualData/Akagai_sheet.xlsx` を読み込み、生データの値をチェックし、チェック用の表および図を `output/` に出力します
 
-Example commands in R:
+* `R/02_make_clean_data_and_figures.R`
+  チェック結果を読み込み、解析用の整形済みデータセットを作成し、追加の集計表および図を出力します
+
+* `R/03_fit_glmm_models.R`
+  `data_processed/akagai_glmm_input.csv` を読み込み、候補となるGLMMを当てはめ、AICによってモデル比較を行い、標準化指数および比較図を出力します
+
+Rでの実行例：
 
 ```r
 source(file.path("R", "01_check_raw_data.R"))
@@ -37,78 +41,92 @@ source(file.path("R", "02_make_clean_data_and_figures.R"))
 source(file.path("R", "03_fit_glmm_models.R"))
 ```
 
-## Required data
+---
 
-To run the workflow, you must manually place the real input file at:
+## 必要なデータ（Required data）
 
-- `ActualData/Akagai_sheet.xlsx`
+このワークフローを実行するためには、以下の入力ファイルを手動で配置する必要があります：
 
-The real dataset is not included in this public repository.
+* `ActualData/Akagai_sheet.xlsx`
 
-For reference on the expected workbook format, the repository includes:
+実データは、この公開リポジトリには含まれていません。
 
-- `ActualData/example_Akagai_sheet.xlsx`
+入力ファイルの形式を確認するための参考として、以下のダミーファイルを同梱しています：
 
-The repository also keeps supporting files that are used by the existing scripts, including:
+* `ActualData/example_Akagai_sheet.xlsx`
 
-- `ActualData/AreaLonLat.csv`
+また、既存スクリプトで使用される補助ファイルとして、以下も含まれています：
 
-`ActualData/` itself is kept in the repository, but the real workbook `ActualData/Akagai_sheet.xlsx` is excluded from version control.
+* `ActualData/AreaLonLat.csv`
 
-## How to run
+`ActualData/` ディレクトリ自体はリポジトリに含まれていますが、実データである `ActualData/Akagai_sheet.xlsx` はバージョン管理から除外されています。
 
-1. Place the real workbook as `ActualData/Akagai_sheet.xlsx`.
-2. Open the project in R or RStudio.
-3. Run the three scripts manually in order.
-4. Check intermediate files in `output/` and processed datasets in `data_processed/` if needed.
-5. For public sharing, copy selected figures and tables from the local analysis outputs into `docs/results/`.
+---
 
-The repository is written with manual stepwise execution in mind rather than a single pipeline command.
+## 実行方法
 
-## Main results
+1. 実データファイルを `ActualData/Akagai_sheet.xlsx` として配置します
+2. R または RStudio でプロジェクトを開きます
+3. 3つのスクリプトを順番に手動で実行します
+4. 必要に応じて、`output/` 内の中間ファイルや `data_processed/` 内の整形済みデータを確認します
+5. 公開用には、ローカルで生成された結果の中から、必要な図や表を `docs/results/` にコピーします
 
-For the public-facing repository, the main outputs to highlight are:
+本リポジトリは、単一コマンドで一括実行するパイプラインではなく、ステップごとに手動で実行することを前提として設計されています。
 
-- `docs/results/aic_compare_all.csv`
-- `docs/results/overlay_best_combined_2x2.png`
+---
 
-`aic_compare_all.csv` is the integrated model comparison table across response variables. It summarizes candidate-model fit statistics, including AIC and delta AIC, and is intended to show how model choice was evaluated on a common comparison dataset for each response.
+## 主な結果
 
-`overlay_best_combined_2x2.png` is the main summary figure for the four size classes (`chu`, `dai`, `toku`, `tokudai`). It overlays the standardized index from the selected GLMM and the corresponding raw relative CPUE, making it easier to see where model-based standardization and unstandardized annual patterns are similar or different.
+公開用リポジトリにおいて、主に参照すべき成果物は以下の2つです：
 
-When `docs/results/overlay_best_combined_2x2.png` is available in the public repository, it can be embedded as follows:
+* `docs/results/aic_compare_all.csv`
+* `docs/results/overlay_best_combined_2x2.png`
+
+`aic_compare_all.csv` は、各応答変数に対する候補モデルの比較結果をまとめた統合テーブルです。AICおよびΔAICなどの適合度指標を含み、各応答に対して共通の比較データセット上でモデル選択がどのように行われたかを示します。
+
+`overlay_best_combined_2x2.png` は、4つのサイズ区分（`chu`, `dai`, `toku`, `tokudai`）に対する主要な要約図です。選択されたGLMMによる標準化指数と、生の相対CPUEを重ねて表示しており、モデルによる標準化後の傾向と未標準化の年変動がどの程度一致しているか、あるいは乖離しているかを視覚的に確認できます。
+
+`docs/results/overlay_best_combined_2x2.png` がリポジトリ内に存在する場合、以下のように埋め込むことができます：
 
 ![Combined overlay of raw relative CPUE and standardized indices](docs/results/overlay_best_combined_2x2.png)
 
-Interpretation should remain cautious. Broadly, the standardized index is useful for examining year-to-year variation after adjusting for modeled effects such as area, vessel, month, effort, and, where selected, depth structure. By contrast, raw CPUE is the unstandardized catch-per-unit-effort summary and can reflect changes in sampling composition as well as changes in catch rates. Differences between the two may therefore suggest the influence of covariate structure, not only biological change.
+解釈は慎重に行う必要があります。
+一般的に、標準化指数は、漁区・船・月・努力量、さらに選択された場合には水深構造などの影響を補正した上で、年ごとの変動を評価するために有用です。一方、生のCPUEは未標準化の指標であり、漁獲率の変化だけでなく、サンプリング構成の変化の影響も受けます。したがって、両者の違いは、生物学的な変化だけでなく、共変量構造の影響を示唆している可能性があります。
 
-## Important notes
+---
 
-- Depth missingness:
-  records with missing or unusable depth values are retained in earlier processing where possible, but `depth_glmm` becomes `NA` when both depth columns are missing or when both recorded depths exceed the threshold rule used in cleaning. Depth-dependent model comparisons are therefore based on rows with usable depth information.
-- Speed and duration replacement rules:
-  in `R/02_make_clean_data_and_figures.R`, speed is replaced with `3` knots when missing, `<= 0.5`, or `> 5`. Duration is replaced with `60` minutes when missing, `<= 10`, or `> 90`.
-- Standardized CPUE index:
-  the standardized index is an index derived from the fitted model and should not be interpreted as absolute stock abundance or absolute biomass.
-- Model comparison subset:
-  candidate models are compared on the same subset within each response so that AIC differences reflect model structure rather than changing input rows.
+## 重要な注意点
 
-## Outputs
+* 深度欠損の扱い
+  深度が欠損または利用不可能なレコードは、可能な限り前処理段階では保持されますが、両方の深度列が欠損している場合や、両方の深度がクリーニングで設定された閾値を超える場合には、`depth_glmm` は `NA` とされます。そのため、深度を含むモデル比較は、深度情報が利用可能な行に基づいて行われます。
 
-During local analysis, the scripts write intermediate and final files mainly to:
+* 速度および曳航時間の置換ルール
+  `R/02_make_clean_data_and_figures.R` において、速度は欠損、`<= 0.5`、または `> 5` の場合に `3` ノットに置換されます。曳航時間は欠損、`<= 10` 分、または `> 90` 分の場合に `60` 分に置換されます。
 
-- `output/`
-- `data_processed/`
+* 標準化CPUE指数
+  標準化指数はモデルから導出された相対指標であり、絶対的な資源量やバイオマスを直接示すものではありません。
 
-These directories are intentionally excluded from version control because they contain generated products from local runs.
+* モデル比較のデータセット
+  各応答変数ごとに、候補モデルは同一のサブセット上で比較されています。これにより、AICの差がデータの違いではなく、モデル構造の違いを反映するようにしています。
 
-For the public repository, readers should first look at curated outputs under:
+---
 
-- `docs/results/`
+## 出力
 
-Recommended public-facing files include the main model-comparison table and selected figures such as:
+ローカル環境で解析を実行した場合、スクリプトは主に以下のディレクトリに中間および最終出力を保存します：
 
-- `docs/results/aic_compare_all.csv`
-- `docs/results/overlay_best_combined_2x2.png`
+* `output/`
+* `data_processed/`
 
-Other files such as `best_model_table.csv` and `best_model_summary.csv` can still be useful internally, but they are not the primary entry points for the public README.
+これらのディレクトリはローカル実行によって生成される成果物を含むため、バージョン管理からは除外されています。
+
+公開用リポジトリでは、まず以下のディレクトリに整理された成果物を参照してください：
+
+* `docs/results/`
+
+公開用として推奨されるファイルには、以下が含まれます：
+
+* `docs/results/aic_compare_all.csv`
+* `docs/results/overlay_best_combined_2x2.png`
+
+`best_model_table.csv` や `best_model_summary.csv` などのファイルも有用です。
