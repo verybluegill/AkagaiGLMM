@@ -24,6 +24,7 @@ path_best_model_table <- file.path("output", "tables", "best_model_table.csv")
 path_best_model_summary <- file.path("output", "tables", "best_model_summary.csv")
 path_results_rds <- file.path("output", "models", "glmm_workflow_results.rds")
 
+# 左辺が NULL または長さ 0 のとき右辺を返す。
 `%||%` <- function(x, y) {
   if (length(x) == 0 || is.null(x)) {
     return(y)
@@ -32,6 +33,7 @@ path_results_rds <- file.path("output", "models", "glmm_workflow_results.rds")
   x
 }
 
+# 重複を除いたメッセージを 1 つの文字列にまとめる。
 combine_messages <- function(...) {
   vals <- unlist(list(...), use.names = FALSE)
   vals <- vals[!is.na(vals) & nzchar(vals)]
@@ -43,14 +45,17 @@ combine_messages <- function(...) {
   paste(unique(vals), collapse = " | ")
 }
 
+# year 値を整数に変換する。
 to_year_numeric <- function(x) {
   suppressWarnings(as.integer(as.character(x)))
 }
 
+# 欠損を除いた観測済みの水準を文字列で返す。
 get_observed_levels <- function(x) {
   sort(unique(as.character(x[!is.na(x)])))
 }
 
+# 年指数テーブルから推定値の列名を特定する。
 get_year_index_col <- function(tbl) {
   matched <- intersect(c("response", "rate", "prob", "emmean"), names(tbl))
 
@@ -61,6 +66,7 @@ get_year_index_col <- function(tbl) {
   matched[[1]]
 }
 
+# 指定したランダム効果の分散と標準偏差を取り出す。
 extract_re_sd <- function(varcorr_cond, grp_name) {
   if (is.null(varcorr_cond[[grp_name]])) {
     return(c(variance = NA_real_, sd = NA_real_))
@@ -75,6 +81,7 @@ extract_re_sd <- function(varcorr_cond, grp_name) {
   )
 }
 
+# glmmTMB の当てはめ結果と警告・エラーをまとめて返す。
 safe_fit_glmmTMB <- function(model_id, formula_obj, data_obj) {
   warning_messages <- character(0)
   error_message <- NA_character_
@@ -105,6 +112,7 @@ safe_fit_glmmTMB <- function(model_id, formula_obj, data_obj) {
   )
 }
 
+# DHARMa を使って分散診断を実行し、必要なら診断図も保存する。
 run_dharma_dispersion <- function(fit_obj, optional_pkgs, output_plot_path = NULL) {
   if (!isTRUE(optional_pkgs[["DHARMa"]]) || is.null(fit_obj)) {
     return(list(
@@ -162,6 +170,7 @@ run_dharma_dispersion <- function(fit_obj, optional_pkgs, output_plot_path = NUL
   )
 }
 
+# 3 区分用の depth 境界候補の組み合わせを作る。
 build_depth_boundary_candidates <- function(depth_values) {
   unique_depth <- sort(unique(depth_values))
 
@@ -176,6 +185,7 @@ build_depth_boundary_candidates <- function(depth_values) {
     dplyr::filter(.data$c1 < .data$c2)
 }
 
+# 指定した 2 つの境界で depth 区分を作り、各区分の件数を集計する。
 summarise_depth_split <- function(depth_values, c1, c2) {
   depth_cat_chr <- dplyr::case_when(
     depth_values <= c1 ~ "shallow",
@@ -214,6 +224,7 @@ summarise_depth_split <- function(depth_values, c1, c2) {
     )
 }
 
+# 主解析に使うデータから共通の depth 区分境界を決める。
 determine_depth_boundaries <- function(glmm_input) {
   depth_source_tbl <- glmm_input |>
     dplyr::filter(.data$flag_use_for_main_glmm) |>
@@ -290,6 +301,7 @@ determine_depth_boundaries <- function(glmm_input) {
   )
 }
 
+# depth 境界情報に基づいて depth カテゴリ列を付与する。
 attach_depth_category <- function(data_obj, depth_boundary_info) {
   data_obj |>
     dplyr::mutate(
@@ -306,6 +318,7 @@ attach_depth_category <- function(data_obj, depth_boundary_info) {
     )
 }
 
+# モデル用に year・month・area・vessel を factor 化する。
 prepare_model_factors <- function(data_obj) {
   data_obj |>
     dplyr::mutate(
@@ -316,6 +329,7 @@ prepare_model_factors <- function(data_obj) {
     )
 }
 
+# モデル比較用の解析データを作成する。
 make_compare_dataset <- function(glmm_input, response_name, depth_boundary_info) {
   compare_tbl <- glmm_input |>
     dplyr::filter(.data$flag_use_for_main_glmm) |>
@@ -361,6 +375,7 @@ make_compare_dataset <- function(glmm_input, response_name, depth_boundary_info)
     prepare_model_factors()
 }
 
+# 選択モデルの再当てはめに使う最終データを作成する。
 make_final_dataset <- function(glmm_input, response_name, uses_depth, depth_boundary_info, compare_tbl = NULL) {
   if (isTRUE(uses_depth)) {
     return(compare_tbl)
@@ -398,6 +413,7 @@ make_final_dataset <- function(glmm_input, response_name, uses_depth, depth_boun
   final_tbl
 }
 
+# 比較対象とする候補モデルの仕様一覧を作成する。
 build_candidate_model_specs <- function() {
   fixed_specs <- list(
     list(
@@ -495,6 +511,7 @@ build_candidate_model_specs <- function() {
   )
 }
 
+# 当てはめ結果からモデル比較用の指標を取り出す。
 extract_model_metrics <- function(response_name, spec_i, fit_out_i) {
   fit_obj <- fit_out_i$fit
   warning_message <- combine_messages(fit_out_i$warning_message, fit_out_i$error_message)
@@ -538,6 +555,7 @@ extract_model_metrics <- function(response_name, spec_i, fit_out_i) {
   )
 }
 
+# 収束条件を満たす候補の中から AIC 最小のモデルを選ぶ。
 select_best_model <- function(compare_results_tbl) {
   valid_tbl <- compare_results_tbl |>
     dplyr::filter(
@@ -555,6 +573,7 @@ select_best_model <- function(compare_results_tbl) {
   valid_tbl[1, , drop = FALSE]
 }
 
+# モデル予測から年別の標準化前指数を計算する。
 compute_year_index_table <- function(model_obj, data_obj, depth_mode, depth_reference_level = NULL) {
   model_frame_names <- names(stats::model.frame(model_obj))
   year_levels_used <- get_observed_levels(data_obj$year)
@@ -615,6 +634,7 @@ compute_year_index_table <- function(model_obj, data_obj, depth_mode, depth_refe
     )
 }
 
+# 年指数を平均 1 基準に標準化したテーブルへ変換する。
 build_standardized_index_table <- function(tbl, response_name, best_model_id) {
   year_index_col <- get_year_index_col(tbl)
   estimate_vals <- suppressWarnings(as.numeric(tbl[[year_index_col]]))
@@ -636,6 +656,7 @@ build_standardized_index_table <- function(tbl, response_name, best_model_id) {
   )
 }
 
+# 年別の raw CPUE を集計する。
 make_raw_cpue_table <- function(data_obj, response_name) {
   data_obj |>
     dplyr::filter(
@@ -660,6 +681,7 @@ make_raw_cpue_table <- function(data_obj, response_name) {
     dplyr::arrange(.data$year)
 }
 
+# 標準化指数と raw CPUE を重ね描き用の形式に整える。
 build_overlay_table <- function(index_tbl, raw_cpue_tbl, response_name, best_model_id) {
   cpue_mean <- mean(raw_cpue_tbl$cpue, na.rm = TRUE)
 
@@ -688,6 +710,7 @@ build_overlay_table <- function(index_tbl, raw_cpue_tbl, response_name, best_mod
   dplyr::bind_rows(raw_tbl, index_plot_tbl)
 }
 
+# 年別の標準化指数を図として保存する。
 plot_year_index <- function(index_tbl, output_path, title_text, show_ci = FALSE) {
   p <- ggplot2::ggplot(index_tbl, ggplot2::aes(x = .data$year, y = .data$estimate, group = 1)) +
     ggplot2::geom_line() +
@@ -717,6 +740,7 @@ plot_year_index <- function(index_tbl, output_path, title_text, show_ci = FALSE)
   )
 }
 
+# 標準化指数と raw CPUE の比較図を保存する。
 plot_overlay <- function(overlay_tbl, output_path, title_text) {
   p <- ggplot2::ggplot(
     overlay_tbl,
@@ -757,11 +781,13 @@ plot_overlay <- function(overlay_tbl, output_path, title_text) {
   )
 }
 
+# 最良モデルの summary 出力をテキスト保存する。
 write_best_model_detail <- function(fit_obj, output_path) {
   detail_lines <- capture.output(summary(fit_obj))
   writeLines(detail_lines, con = output_path, useBytes = TRUE)
 }
 
+# 最良モデルの要約指標を 1 行のテーブルにまとめる。
 build_best_model_summary_row <- function(response_name, best_model_row, final_fit_out, final_dataset_rows, compare_dataset_rows) {
   fit_obj <- final_fit_out$fit
   vc_cond <- tryCatch(VarCorr(fit_obj)$cond, error = function(e) NULL)
