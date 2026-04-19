@@ -5,10 +5,11 @@
 # =========================================
 
 source(file.path("R", "00_load_packages.R"))
+source(file.path("R", "build_area_geometry.R"))
 
 optional_pkgs <- load_project_packages(
   required_pkgs = c("tidyverse", "glmmTMB"),
-  optional_pkgs = c("emmeans", "DHARMa")
+  optional_pkgs = c("emmeans", "DHARMa", "mgcv")
 )
 
 ensure_project_dirs()
@@ -59,6 +60,143 @@ compute_year_index_table <- function(model_obj, data_obj, optional_pkgs, depth_g
     summarise(response = mean(predicted), .groups = "drop")
 }
 
+collapse_notes <- function(notes_vec) {
+  notes_vec <- unique(notes_vec[!is.na(notes_vec) & nzchar(notes_vec)])
+
+  if (length(notes_vec) == 0) {
+    return(NA_character_)
+  }
+
+  paste(notes_vec, collapse = " | ")
+}
+
+safe_fit_gam <- function(model_name, formula_obj, data_obj, mgcv_available) {
+  # centroid 付き subset に対して spatial smooth GAM を安全に当てる
+  warning_messages <- character(0)
+  base_notes <- character(0)
+
+  if (!isTRUE(mgcv_available)) {
+    return(list(
+      fit = NULL,
+      warnings = character(0),
+      notes = "package missing"
+    ))
+  }
+
+  fit_obj <- tryCatch(
+    withCallingHandlers(
+      mgcv::gam(
+        formula = formula_obj,
+        family = mgcv::nb(link = "log"),
+        method = "REML",
+        data = data_obj
+      ),
+      warning = function(w) {
+        warning_messages <<- c(warning_messages, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    ),
+    error = function(e) {
+      cat("Warning: model failed:", model_name, "\n", sep = "")
+      cat("  error: ", conditionMessage(e), "\n", sep = "")
+      base_notes <<- c(base_notes, paste0("error: ", conditionMessage(e)))
+      NULL
+    }
+  )
+
+  if (length(warning_messages) > 0) {
+    cat("Warning: warnings were issued for ", model_name, "\n", sep = "")
+    print(unique(warning_messages))
+  }
+
+  list(
+    fit = fit_obj,
+    warnings = unique(warning_messages),
+    notes = collapse_notes(base_notes)
+  )
+}
+
+build_spatial_comparison_row <- function(model_name, package_name, area_structure, depth_degree, subset_label, fit_obj, fit_ok, warnings = character(0), notes = character(0)) {
+  combined_notes <- notes
+
+  if (length(warnings) > 0) {
+    combined_notes <- c(combined_notes, paste0("warnings: ", paste(unique(warnings), collapse = "; ")))
+  }
+
+  if (!fit_ok) {
+    return(tibble(
+      model_name = model_name,
+      package_name = package_name,
+      area_structure = area_structure,
+      depth_degree = depth_degree,
+      subset_label = subset_label,
+      fit_ok = FALSE,
+      AIC = NA_real_,
+      BIC = NA_real_,
+      logLik = NA_real_,
+      nobs = NA_integer_,
+      converged = NA,
+      notes = collapse_notes(combined_notes)
+    ))
+  }
+
+  converged_value <- if (identical(package_name, "mgcv")) {
+    tryCatch(isTRUE(fit_obj$converged), error = function(e) TRUE)
+  } else {
+    tryCatch(isTRUE(fit_obj$fit$convergence == 0) && isTRUE(fit_obj$sdr$pdHess), error = function(e) NA)
+  }
+
+  tibble(
+    model_name = model_name,
+    package_name = package_name,
+    area_structure = area_structure,
+    depth_degree = depth_degree,
+    subset_label = subset_label,
+    fit_ok = TRUE,
+    AIC = tryCatch(as.numeric(AIC(fit_obj)[1]), error = function(e) NA_real_),
+    BIC = tryCatch(as.numeric(BIC(fit_obj)[1]), error = function(e) NA_real_),
+    logLik = tryCatch(as.numeric(logLik(fit_obj)), error = function(e) NA_real_),
+    nobs = tryCatch(as.integer(stats::nobs(fit_obj)), error = function(e) NA_integer_),
+    converged = converged_value,
+    notes = collapse_notes(combined_notes)
+  )
+}
+
+compute_year_index_table_gam <- function(model_obj, data_obj, depth_glmm_sc_value = NULL) {
+  year_levels_used <- get_observed_factor_levels(data_obj$year)
+  month_levels_used <- get_observed_factor_levels(data_obj$month)
+  vessel_levels_used <- get_observed_factor_levels(data_obj$vessel)
+  centroid_tbl <- data_obj |>
+    distinct(area, lon, lat) |>
+    arrange(area)
+
+  pred_grid <- expand_grid(
+    year = factor(year_levels_used, levels = year_levels_used),
+    month = factor(month_levels_used, levels = month_levels_used),
+    centroid_tbl
+  ) |>
+    mutate(
+      vessel = factor(vessel_levels_used[[1]], levels = levels(data_obj$vessel)),
+      effort_glmm = 1
+    )
+
+  if (!is.null(depth_glmm_sc_value)) {
+    pred_grid$depth_glmm_sc <- depth_glmm_sc_value
+  }
+
+  pred_grid |>
+    mutate(
+      predicted = as.numeric(predict(
+        model_obj,
+        newdata = pred_grid,
+        type = "response",
+        exclude = "s(vessel)"
+      ))
+    ) |>
+    group_by(year) |>
+    summarise(response = mean(predicted), .groups = "drop")
+}
+
 input_path <- file.path("data_processed", "akagai_glmm_input.csv")
 fit_path <- file.path("output", "models", "fit_nb_total_with_depth.rds")
 emm_year_path <- file.path("output", "tables", "emm_year_total_with_depth.csv")
@@ -82,6 +220,12 @@ emm_year_depth1_path <- file.path("output", "tables", "emm_year_total_depth1_sam
 index_compare_fig_path <- file.path("output", "figures", "index_total_depth0_vs_depth1_same_subset.png")
 depth_fill_area_year_summary_path <- file.path("output", "tables", "check_depth_fill_area_year_summary.csv")
 depth_effect_best_fig_path <- file.path("output", "figures", "depth_effect_best_total_model.png")
+area_centroids_path <- file.path("output", "tables", "area_centroids.csv")
+spatial_model_comparison_path <- file.path("output", "tables", "model_comparison_total_area_depth_spatial.csv")
+area_centroid_coverage_path <- file.path("output", "tables", "area_centroid_coverage_in_depth_subset.csv")
+spatial_smooth_effect_best_path <- file.path("output", "figures", "spatial_smooth_effect_total_depth_best.png")
+spatial_smooth_prediction_grid_path <- file.path("output", "tables", "spatial_smooth_prediction_grid_best.csv")
+emm_year_spatial_best_path <- file.path("output", "tables", "emm_year_total_with_depth_spatial_best.csv")
 
 if (!file.exists(input_path)) {
   stop("Input file not found: ", input_path)
@@ -354,8 +498,64 @@ cat("\n=== depth standardization ===\n")
 cat("depth_glmm_mean=", depth_glmm_mean, "\n", sep = "")
 cat("depth_glmm_sd=", depth_glmm_sd, "\n", sep = "")
 
-# 同じ glmm_dat_depth を使って、Area の random / fixed と depth 0 / 1 / 2 を比較する
+if (!file.exists(area_centroids_path)) {
+  build_and_write_area_geometry(output_dir = "output")
+}
+
+area_centroids_tbl <- readr::read_csv(area_centroids_path, show_col_types = FALSE) |>
+  mutate(
+    area = as.character(area),
+    lon = as.numeric(lon),
+    lat = as.numeric(lat)
+  )
+
+glmm_dat_depth_with_centroid <- glmm_dat_depth |>
+  mutate(area_chr = as.character(area)) |>
+  left_join(area_centroids_tbl, by = c("area_chr" = "area")) |>
+  mutate(
+    area = factor(area_chr, levels = levels(glmm_dat_depth$area))
+  ) |>
+  select(-area_chr)
+
+area_centroid_coverage_tbl <- glmm_dat_depth_with_centroid |>
+  mutate(area_chr = as.character(area)) |>
+  group_by(area = area_chr) |>
+  summarise(
+    n_rows = n(),
+    has_centroid = any(!is.na(lon) & !is.na(lat)),
+    mean_count_total = mean(count_total, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(area)
+
+write_csv(area_centroid_coverage_tbl, area_centroid_coverage_path)
+
+areas_without_centroid <- glmm_dat_depth_with_centroid |>
+  filter(is.na(lon) | is.na(lat)) |>
+  distinct(area) |>
+  pull(area) |>
+  as.character() |>
+  sort()
+
+n_spatial_available <- sum(!is.na(glmm_dat_depth_with_centroid$lon) & !is.na(glmm_dat_depth_with_centroid$lat))
+n_spatial_dropped <- nrow(glmm_dat_depth_with_centroid) - n_spatial_available
+prop_spatial_available <- if (nrow(glmm_dat_depth_with_centroid) == 0) NA_real_ else n_spatial_available / nrow(glmm_dat_depth_with_centroid)
+
+glmm_dat_depth_spatial <- glmm_dat_depth_with_centroid |>
+  filter(!is.na(lon), !is.na(lat))
+
+cat("\n=== centroid coverage in depth subset ===\n")
+cat("n_spatial_available=", n_spatial_available, "\n", sep = "")
+cat("n_spatial_dropped=", n_spatial_dropped, "\n", sep = "")
+cat("prop_spatial_available=", prop_spatial_available, "\n", sep = "")
+cat("areas_without_centroid=", if (length(areas_without_centroid) == 0) "none" else paste(areas_without_centroid, collapse = ","), "\n", sep = "")
+
+if (nrow(glmm_dat_depth_spatial) == 0) {
+  stop("Centroid join produced no spatially available rows in the depth subset.")
+}
+
 safe_fit_glmmTMB <- function(model_name, formula_obj, data_obj) {
+  # 同じ depth subset を使って、area の random / fixed と depth 0 / 1 / 2 を比較する
   warning_messages <- character(0)
 
   fit_obj <- tryCatch(
@@ -642,8 +842,8 @@ depth_plot_grid <- expand_grid(
     vessel = factor(vessel_levels_used[[1]], levels = vessel_levels_used)
   )
 
-# depth 効果図は基準 year と reference month を固定した補助図
-# 固定した条件を最後に出力して、恣意性が分かるようにする
+# depth 陷会ｽｹ隴ｫ諛ｷ蟲咏ｸｺ・ｯ陜難ｽｺ雋・・year 邵ｺ・ｨ reference month 郢ｧ雋槫ｴ玖楜螢ｹ・邵ｺ貅ｯ・｣諛ｷ蜍ｧ陜暦ｽｳ
+# 陜暦ｽｺ陞ｳ螢ｹ・邵ｺ貊捺套闔会ｽｶ郢ｧ蜻域呵募ｾ娯・陷・ｽｺ陷牙ｸ呻ｼ邵ｺ・ｦ邵ｲ竏ｵ笆ｲ隲｢荵猟・ｧ邵ｺ謔溘・邵ｺ荵晢ｽ狗ｹｧ蛹ｻ竕ｧ邵ｺ・ｫ邵ｺ蜷ｶ・・
 if (best_model_depth_degree > 0) {
   depth_plot_grid$predicted_count <- predict(
     best_model_obj,
@@ -770,10 +970,226 @@ if (best_model_depth_degree > 0) {
   cat("best model does not include depth, so depth effect plots were skipped.\n")
 }
 
+spatial_compare_note <- c(
+  "same-subset comparison on rows with centroid",
+  "AIC comparison across glmmTMB and mgcv is exploratory"
+)
+
+spatial_nonspatial_specs <- list(
+  list(model_name = "fit_nb_total_area_re_depth0_spatial_subset", package_name = "glmmTMB", area_structure = "random_iid", depth_degree = 0, formula = count_total ~ year + month + offset(log(effort_glmm)) + (1 | area) + (1 | vessel)),
+  list(model_name = "fit_nb_total_area_re_depth1_spatial_subset", package_name = "glmmTMB", area_structure = "random_iid", depth_degree = 1, formula = count_total ~ year + month + depth_glmm_sc + offset(log(effort_glmm)) + (1 | area) + (1 | vessel)),
+  list(model_name = "fit_nb_total_area_re_depth2_spatial_subset", package_name = "glmmTMB", area_structure = "random_iid", depth_degree = 2, formula = count_total ~ year + month + depth_glmm_sc + I(depth_glmm_sc^2) + offset(log(effort_glmm)) + (1 | area) + (1 | vessel)),
+  list(model_name = "fit_nb_total_area_fe_depth0_spatial_subset", package_name = "glmmTMB", area_structure = "fixed", depth_degree = 0, formula = count_total ~ year + month + area + offset(log(effort_glmm)) + (1 | vessel)),
+  list(model_name = "fit_nb_total_area_fe_depth1_spatial_subset", package_name = "glmmTMB", area_structure = "fixed", depth_degree = 1, formula = count_total ~ year + month + area + depth_glmm_sc + offset(log(effort_glmm)) + (1 | vessel)),
+  list(model_name = "fit_nb_total_area_fe_depth2_spatial_subset", package_name = "glmmTMB", area_structure = "fixed", depth_degree = 2, formula = count_total ~ year + month + area + depth_glmm_sc + I(depth_glmm_sc^2) + offset(log(effort_glmm)) + (1 | vessel))
+)
+
+spatial_gam_specs <- list(
+  list(model_name = "fit_gam_total_spatial_depth0", package_name = "mgcv", area_structure = "centroid_smooth", depth_degree = 0, formula = count_total ~ year + month + s(vessel, bs = "re") + s(lon, lat, bs = "tp", k = 10) + offset(log(effort_glmm))),
+  list(model_name = "fit_gam_total_spatial_depth1", package_name = "mgcv", area_structure = "centroid_smooth", depth_degree = 1, formula = count_total ~ year + month + depth_glmm_sc + s(vessel, bs = "re") + s(lon, lat, bs = "tp", k = 10) + offset(log(effort_glmm))),
+  list(model_name = "fit_gam_total_spatial_depth2", package_name = "mgcv", area_structure = "centroid_smooth", depth_degree = 2, formula = count_total ~ year + month + depth_glmm_sc + I(depth_glmm_sc^2) + s(vessel, bs = "re") + s(lon, lat, bs = "tp", k = 10) + offset(log(effort_glmm)))
+)
+
+spatial_compare_specs <- c(spatial_nonspatial_specs, spatial_gam_specs)
+spatial_compare_results <- vector("list", length(spatial_compare_specs))
+names(spatial_compare_results) <- vapply(spatial_compare_specs, function(x) x$model_name, character(1))
+
+for (i in seq_along(spatial_compare_specs)) {
+  spec_i <- spatial_compare_specs[[i]]
+
+  if (identical(spec_i$package_name, "glmmTMB")) {
+    spatial_compare_results[[spec_i$model_name]] <- safe_fit_glmmTMB(
+      model_name = spec_i$model_name,
+      formula_obj = spec_i$formula,
+      data_obj = glmm_dat_depth_spatial
+    )
+  } else {
+    spatial_compare_results[[spec_i$model_name]] <- safe_fit_gam(
+      model_name = spec_i$model_name,
+      formula_obj = spec_i$formula,
+      data_obj = glmm_dat_depth_spatial,
+      mgcv_available = optional_pkgs[["mgcv"]]
+    )
+  }
+}
+
+spatial_model_comparison_tbl <- bind_rows(
+  lapply(spatial_compare_specs, function(spec_i) {
+    fit_result_i <- spatial_compare_results[[spec_i$model_name]]
+    build_spatial_comparison_row(
+      model_name = spec_i$model_name,
+      package_name = spec_i$package_name,
+      area_structure = spec_i$area_structure,
+      depth_degree = spec_i$depth_degree,
+      subset_label = "depth_common_with_centroid",
+      fit_obj = fit_result_i$fit,
+      fit_ok = !is.null(fit_result_i$fit),
+      warnings = fit_result_i$warnings,
+      notes = c(
+        spatial_compare_note,
+        fit_result_i$notes,
+        paste0("n_spatial_available=", n_spatial_available),
+        paste0("n_spatial_dropped=", n_spatial_dropped)
+      )
+    )
+  })
+) |>
+  mutate(
+    AIC_sort = if_else(is.na(AIC), Inf, AIC)
+  ) |>
+  arrange(desc(fit_ok), AIC_sort, model_name) |>
+  select(
+    model_name, package_name, area_structure, depth_degree, subset_label,
+    fit_ok, AIC, BIC, logLik, nobs, converged, notes
+  )
+
+write_csv(spatial_model_comparison_tbl, spatial_model_comparison_path)
+
+spatial_nobs_unique <- spatial_model_comparison_tbl |>
+  filter(fit_ok) |>
+  pull(nobs) |>
+  unique() |>
+  sort()
+
+same_subset_spatial_compare <- length(spatial_nobs_unique) == 1 && identical(as.integer(spatial_nobs_unique[[1]]), as.integer(n_spatial_available))
+
+best_nonspatial_same_subset_row <- spatial_model_comparison_tbl |>
+  filter(fit_ok, area_structure %in% c("fixed", "random_iid")) |>
+  slice_head(n = 1)
+
+best_centroid_smooth_row <- spatial_model_comparison_tbl |>
+  filter(fit_ok, area_structure == "centroid_smooth") |>
+  slice_head(n = 1)
+
+empty_spatial_year_tbl <- tibble(
+  model_name = character(),
+  year = character(),
+  response = numeric(),
+  depth_degree = integer()
+)
+
+empty_spatial_grid_tbl <- tibble(
+  model_name = character(),
+  lon = numeric(),
+  lat = numeric(),
+  predicted_count = numeric(),
+  year_ref = character(),
+  month_condition = character()
+)
+
+if (nrow(best_centroid_smooth_row) == 1) {
+  best_centroid_smooth_model_name <- best_centroid_smooth_row$model_name[[1]]
+  best_centroid_smooth_fit <- spatial_compare_results[[best_centroid_smooth_model_name]]$fit
+  best_centroid_smooth_depth_degree <- best_centroid_smooth_row$depth_degree[[1]]
+
+  emm_year_spatial_best_tbl <- compute_year_index_table_gam(
+    model_obj = best_centroid_smooth_fit,
+    data_obj = glmm_dat_depth_spatial,
+    depth_glmm_sc_value = if (best_centroid_smooth_depth_degree > 0) depth_glmm_sc_ref else NULL
+  ) |>
+    mutate(
+      model_name = best_centroid_smooth_model_name,
+      depth_degree = best_centroid_smooth_depth_degree,
+      .before = 1
+    )
+
+  spatial_year_levels_used <- get_observed_factor_levels(glmm_dat_depth_spatial$year)
+  spatial_month_levels_used <- get_observed_factor_levels(glmm_dat_depth_spatial$month)
+  spatial_vessel_levels_used <- get_observed_factor_levels(glmm_dat_depth_spatial$vessel)
+  spatial_year_ref <- spatial_year_levels_used[[1]]
+
+  spatial_prediction_grid <- expand_grid(
+    lon = seq(min(glmm_dat_depth_spatial$lon), max(glmm_dat_depth_spatial$lon), length.out = 60),
+    lat = seq(min(glmm_dat_depth_spatial$lat), max(glmm_dat_depth_spatial$lat), length.out = 60),
+    month = factor(spatial_month_levels_used, levels = spatial_month_levels_used)
+  ) |>
+    mutate(
+      year = factor(spatial_year_ref, levels = spatial_year_levels_used),
+      vessel = factor(spatial_vessel_levels_used[[1]], levels = levels(glmm_dat_depth_spatial$vessel)),
+      effort_glmm = 1
+    )
+
+  if (best_centroid_smooth_depth_degree > 0) {
+    spatial_prediction_grid$depth_glmm_sc <- depth_glmm_sc_ref
+  }
+
+  spatial_prediction_grid$predicted_count <- as.numeric(predict(
+    best_centroid_smooth_fit,
+    newdata = spatial_prediction_grid,
+    type = "response",
+    exclude = "s(vessel)"
+  ))
+
+  spatial_smooth_prediction_grid_best_tbl <- spatial_prediction_grid |>
+    group_by(lon, lat) |>
+    summarise(
+      predicted_count = mean(predicted_count),
+      .groups = "drop"
+    ) |>
+    mutate(
+      model_name = best_centroid_smooth_model_name,
+      year_ref = spatial_year_ref,
+      month_condition = "average_over_month_levels",
+      .before = 1
+    )
+
+  centroids_used_tbl <- glmm_dat_depth_spatial |>
+    distinct(area, lon, lat) |>
+    arrange(area)
+
+  spatial_smooth_effect_best_plot <- ggplot(spatial_smooth_prediction_grid_best_tbl, aes(x = lon, y = lat, fill = predicted_count)) +
+    geom_raster() +
+    geom_point(data = centroids_used_tbl, aes(x = lon, y = lat), inherit.aes = FALSE, color = "black", size = 1.6) +
+    geom_text(data = centroids_used_tbl, aes(x = lon, y = lat, label = area), inherit.aes = FALSE, nudge_y = 0.00035, size = 3) +
+    coord_equal() +
+    labs(
+      x = "Longitude",
+      y = "Latitude",
+      fill = "Predicted count",
+      title = "Spatial smooth effect"
+    ) +
+    theme_bw()
+
+  ggsave(
+    filename = spatial_smooth_effect_best_path,
+    plot = spatial_smooth_effect_best_plot,
+    width = 10,
+    height = 7,
+    dpi = 150
+  )
+} else {
+  best_centroid_smooth_model_name <- NA_character_
+  best_centroid_smooth_depth_degree <- NA_integer_
+  emm_year_spatial_best_tbl <- empty_spatial_year_tbl
+  spatial_smooth_prediction_grid_best_tbl <- empty_spatial_grid_tbl
+
+  ggsave(
+    filename = spatial_smooth_effect_best_path,
+    plot = ggplot() + theme_void() + labs(title = "No spatial smooth model was fitted"),
+    width = 10,
+    height = 7,
+    dpi = 150
+  )
+}
+
+write_csv(emm_year_spatial_best_tbl, emm_year_spatial_best_path)
+write_csv(spatial_smooth_prediction_grid_best_tbl, spatial_smooth_prediction_grid_path)
+
+cat("\n=== spatial same-subset comparison ===\n")
+cat("best_nonspatial_model=", best_model_name, "\n", sep = "")
+cat("best_centroid_smooth_model=", best_centroid_smooth_model_name, "\n", sep = "")
+cat("best_nonspatial_nobs=", if (nrow(best_nonspatial_same_subset_row) == 1) best_nonspatial_same_subset_row$nobs[[1]] else NA_integer_, "\n", sep = "")
+cat("best_centroid_smooth_nobs=", if (nrow(best_centroid_smooth_row) == 1) best_centroid_smooth_row$nobs[[1]] else NA_integer_, "\n", sep = "")
+cat("same_subset_comparison_achieved=", same_subset_spatial_compare, "\n", sep = "")
+cat("areas_in_geometry_subset=", paste(sort(unique(as.character(glmm_dat_depth_spatial$area))), collapse = ","), "\n", sep = "")
+
 cat("\n=== saved files ===\n")
 cat("input_path=", input_path, "\n", sep = "")
 cat("fit_path=", fit_path, "\n", sep = "")
 cat("model_comparison_path=", model_comparison_path, "\n", sep = "")
+cat("spatial_model_comparison_path=", spatial_model_comparison_path, "\n", sep = "")
+cat("area_centroids_path=", area_centroids_path, "\n", sep = "")
+cat("area_centroid_coverage_path=", area_centroid_coverage_path, "\n", sep = "")
 cat("row_summary_by_year_path=", row_summary_by_year_path, "\n", sep = "")
 cat("depth_missing_by_year_path=", depth_missing_by_year_path, "\n", sep = "")
 cat("depth_missing_by_month_path=", depth_missing_by_month_path, "\n", sep = "")
@@ -791,6 +1207,9 @@ cat("depth_missing_area_fig_path=", depth_missing_area_fig_path, "\n", sep = "")
 cat("depth_effect_path=", depth_effect_path, "\n", sep = "")
 cat("depth_effect_best_fig_path=", depth_effect_best_fig_path, "\n", sep = "")
 cat("depth_fig_path=", depth_fig_path, "\n", sep = "")
+cat("spatial_smooth_effect_best_path=", spatial_smooth_effect_best_path, "\n", sep = "")
+cat("spatial_smooth_prediction_grid_path=", spatial_smooth_prediction_grid_path, "\n", sep = "")
+cat("emm_year_spatial_best_path=", emm_year_spatial_best_path, "\n", sep = "")
 cat("depth_raw_quantiles_path=", depth_raw_quantiles_path, "\n", sep = "")
 cat("depth_raw_hist_path=", depth_raw_hist_path, "\n", sep = "")
 cat("depth_fig_average_year_path=", depth_fig_average_year_path, "\n", sep = "")

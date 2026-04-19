@@ -5,19 +5,19 @@
 # =========================================
 
 source(file.path("R", "00_load_packages.R"))
+source(file.path("R", "build_area_geometry.R"))
 
 optional_pkgs <- load_project_packages(
-  required_pkgs = c("tidyverse", "glmmTMB", "Matrix")
+  required_pkgs = c("tidyverse", "glmmTMB", "Matrix", "sf")
 )
 
-if (!requireNamespace("spaMM", quietly = TRUE)) {
-  stop(
-    "Missing required package: spaMM. ",
-    "Please install spaMM manually, then rerun this script."
-  )
-}
+spaMM_available <- requireNamespace("spaMM", quietly = TRUE)
 
-library(spaMM)
+if (isTRUE(spaMM_available)) {
+  library(spaMM)
+} else {
+  cat("Warning: spaMM is not available, so adjacency models will be recorded as fit failures.\n")
+}
 
 ensure_project_dirs()
 
@@ -25,10 +25,17 @@ input_path <- file.path("data_processed", "akagai_glmm_input.csv")
 model_comparison_path <- file.path("output", "tables", "model_comparison_total_spatial_area.csv")
 adjacency_matrix_path <- file.path("output", "tables", "area_adjacency_matrix.csv")
 adjacency_edges_path <- file.path("output", "tables", "area_adjacency_edges_symmetrized.csv")
+area_degree_table_path <- file.path("output", "tables", "area_degree_table.csv")
+area_centroids_path <- file.path("output", "tables", "area_centroids.csv")
+area_centroids_used_path <- file.path("output", "tables", "area_centroids_used_in_spatial_models.csv")
+spatial_subset_area_counts_path <- file.path("output", "tables", "spatial_subset_area_counts.csv")
 best_spatial_area_effects_path <- file.path("output", "tables", "best_spatial_area_effects.csv")
 best_spatial_area_effects_plot_path <- file.path("output", "tables", "best_spatial_area_effects_plot_table.csv")
 best_nonspatial_area_residuals_path <- file.path("output", "tables", "best_nonspatial_area_residual_summary.csv")
 best_adjacency_area_residuals_path <- file.path("output", "tables", "best_adjacency_area_residual_summary.csv")
+area_adjacency_graph_path <- file.path("output", "figures", "area_adjacency_graph.png")
+best_spatial_area_effects_map_path <- file.path("output", "figures", "best_spatial_area_effects_map.png")
+year_index_comparison_path <- file.path("output", "tables", "year_index_comparison_nonspatial_vs_adjacency.csv")
 
 if (!file.exists(input_path)) {
   stop("Input file not found: ", input_path)
@@ -39,16 +46,7 @@ required_cols <- c(
   "depth_glmm"
 )
 
-area_universe <- c(
-  "22", "50", "52", "62", "68", "72", "78", "79",
-  "102", "112", "120", "121", "122", "123", "124", "131", "132", "134", "142",
-  "150", "151", "152", "153", "156", "157", "160", "161", "162", "163", "164", "165",
-  "170", "171", "172", "173", "180", "181", "182", "185",
-  "190", "191", "192", "193", "194", "195", "198",
-  "201", "202", "203", "204", "205", "208",
-  "210", "211", "212", "213", "214", "216", "217", "218", "219", "222", "223", "234", "242", "252", "262",
-  "300", "306", "312", "315", "317"
-)
+area_universe <- names(area_polygon_def)
 
 # 注意:
 # この edge list は area code の並びに基づく暫定 adjacency で、
@@ -271,6 +269,17 @@ safe_fit_glmmTMB <- function(model_name, formula_obj, data_obj) {
 
 safe_fit_spaMM <- function(model_name, formula_obj, data_obj, adj_matrix_obj) {
   warning_messages <- character(0)
+  base_notes <- character(0)
+
+  if (!isTRUE(spaMM_available)) {
+    return(list(
+      model_name = model_name,
+      package_name = "spaMM",
+      fit = NULL,
+      warnings = character(0),
+      notes = "package missing"
+    ))
+  }
 
   fit_obj <- tryCatch(
     withCallingHandlers(
@@ -287,6 +296,7 @@ safe_fit_spaMM <- function(model_name, formula_obj, data_obj, adj_matrix_obj) {
       }
     ),
     error = function(e) {
+      base_notes <<- c(base_notes, paste0("error: ", conditionMessage(e)))
       NULL
     }
   )
@@ -295,7 +305,8 @@ safe_fit_spaMM <- function(model_name, formula_obj, data_obj, adj_matrix_obj) {
     model_name = model_name,
     package_name = "spaMM",
     fit = fit_obj,
-    warnings = unique(warning_messages)
+    warnings = unique(warning_messages),
+    notes = collapse_notes(base_notes)
   )
 }
 
@@ -348,6 +359,10 @@ build_model_comparison_row <- function(spec_i, fit_result_i) {
   fit_ok <- !is.null(fit_result_i$fit)
 
   base_notes <- character(0)
+
+  if (!is.null(fit_result_i$notes) && !is.na(fit_result_i$notes)) {
+    base_notes <- c(base_notes, fit_result_i$notes)
+  }
 
   if (length(fit_result_i$warnings) > 0) {
     base_notes <- c(base_notes, paste0("warnings: ", paste(unique(fit_result_i$warnings), collapse = "; ")))
@@ -486,6 +501,44 @@ extract_area_residual_summary <- function(model_name, fit_obj, data_obj) {
     select(model_name, area, mean_residual, median_residual, n_observations, residual_type)
 }
 
+compute_year_index_table_by_prediction <- function(model_name, fit_obj, data_obj) {
+  year_levels_used <- levels(data_obj$year)
+
+  bind_rows(lapply(year_levels_used, function(year_i) {
+    pred_data <- data_obj
+    pred_data$year <- factor(year_i, levels = year_levels_used)
+
+    prediction_obj <- tryCatch(
+      list(
+        values = as.numeric(predict(fit_obj, newdata = pred_data, type = "response")),
+        mode = "conditional"
+      ),
+      error = function(e1) {
+        tryCatch(
+          list(
+            values = as.numeric(predict(fit_obj, newdata = pred_data, type = "response", re.form = NA)),
+            mode = "fixed_only"
+          ),
+          error = function(e2) {
+            list(
+              values = rep(NA_real_, nrow(pred_data)),
+              mode = paste0("failed: ", conditionMessage(e1), " / ", conditionMessage(e2))
+            )
+          }
+        )
+      }
+    )
+
+    tibble(
+      model_name = model_name,
+      year = year_i,
+      response = mean(prediction_obj$values, na.rm = TRUE),
+      prediction_mode = prediction_obj$mode,
+      n_rows = nrow(pred_data)
+    )
+  }))
+}
+
 glmm_input <- readr::read_csv(input_path, show_col_types = FALSE)
 
 missing_cols <- setdiff(required_cols, names(glmm_input))
@@ -522,7 +575,26 @@ if ("flag_use_for_main_glmm" %in% names(glmm_input)) {
     )
 }
 
-glmm_dat_spatial <- glmm_input |>
+geometry_obj <- build_and_write_area_geometry(output_dir = "output")
+adjacency_matrix_full <- read_adjacency_matrix_csv(adjacency_matrix_path)
+adjacency_edges_full <- adjacency_matrix_to_edges(adjacency_matrix_full)
+adjacency_diagnostics <- build_adjacency_diagnostics(adjacency_matrix_full)
+area_centroids_tbl <- readr::read_csv(area_centroids_path, show_col_types = FALSE) |>
+  mutate(
+    area = as.character(area),
+    lon = as.numeric(lon),
+    lat = as.numeric(lat)
+  )
+
+if (!all(adjacency_matrix_full == t(adjacency_matrix_full))) {
+  stop("adjacency_matrix_full is not symmetric.")
+}
+
+if (!identical(sort(rownames(adjacency_matrix_full)), sort(colnames(adjacency_matrix_full)))) {
+  stop("adjacency_matrix_full rownames and colnames do not match.")
+}
+
+glmm_dat_spatial_main <- glmm_input |>
   filter(
     flag_use_for_main_glmm,
     !is_missing_character(area),
@@ -534,19 +606,36 @@ glmm_dat_spatial <- glmm_input |>
     is.finite(count_total)
   )
 
-glmm_dat_spatial_depth <- glmm_dat_spatial |>
+glmm_dat_spatial_depth_raw <- glmm_dat_spatial_main |>
   filter(
     !is.na(depth_glmm),
     is.finite(depth_glmm)
   )
 
-cat("\n=== spatial data summary ===\n")
-cat("n_raw_input=", nrow(glmm_input), "\n", sep = "")
-cat("n_main_subset=", nrow(glmm_dat_spatial), "\n", sep = "")
-cat("n_depth_subset=", nrow(glmm_dat_spatial_depth), "\n", sep = "")
+main_area_observed <- sort(unique(glmm_dat_spatial_main$area))
+areas_not_in_geometry <- setdiff(main_area_observed, area_universe)
 
-if (nrow(glmm_dat_spatial) == 0) {
-  stop("No rows available for glmm_dat_spatial.")
+glmm_dat_spatial_depth <- glmm_dat_spatial_depth_raw |>
+  filter(area %in% area_universe)
+
+n_raw_input <- nrow(glmm_input)
+n_main_subset <- nrow(glmm_dat_spatial_main)
+n_depth_subset <- nrow(glmm_dat_spatial_depth_raw)
+n_area_in_geometry_subset <- nrow(glmm_dat_spatial_depth)
+
+cat("\n=== spatial data summary ===\n")
+cat("n_raw_input=", n_raw_input, "\n", sep = "")
+cat("n_main_subset=", n_main_subset, "\n", sep = "")
+cat("n_depth_subset=", n_depth_subset, "\n", sep = "")
+cat("n_area_in_geometry_subset=", n_area_in_geometry_subset, "\n", sep = "")
+cat("areas_not_in_geometry=", if (length(areas_not_in_geometry) == 0) "none" else paste(areas_not_in_geometry, collapse = ","), "\n", sep = "")
+
+if (nrow(glmm_dat_spatial_main) == 0) {
+  stop("No rows available for glmm_dat_spatial_main.")
+}
+
+if (nrow(glmm_dat_spatial_depth_raw) == 0) {
+  stop("No rows available for glmm_dat_spatial_depth_raw.")
 }
 
 if (nrow(glmm_dat_spatial_depth) == 0) {
@@ -565,32 +654,59 @@ glmm_dat_spatial_depth <- glmm_dat_spatial_depth |>
     depth_glmm_sc = (depth_glmm - depth_glmm_mean) / depth_glmm_sd
   )
 
-adjacency_objects <- build_adjacency_objects(
-  area_universe = area_universe,
-  area_neighbors = area_neighbors
-)
+spatial_subset_area_counts_tbl <- glmm_dat_spatial_main |>
+  mutate(
+    depth_missing = is.na(depth_glmm) | !is.finite(depth_glmm),
+    in_geometry = area %in% area_universe
+  ) |>
+  filter(in_geometry) |>
+  group_by(area) |>
+  summarise(
+    n_rows_main_subset = n(),
+    n_rows_model_subset = sum(!depth_missing),
+    mean_count_total = mean(count_total, na.rm = TRUE),
+    prop_depth_missing = mean(depth_missing),
+    .groups = "drop"
+  ) |>
+  right_join(tibble(area = area_universe), by = "area") |>
+  mutate(
+    n_rows_main_subset = replace_na(n_rows_main_subset, 0L),
+    n_rows_model_subset = replace_na(n_rows_model_subset, 0L)
+  ) |>
+  arrange(area)
 
-write_csv(as_tibble(adjacency_objects$adjacency_matrix, rownames = "area"), adjacency_matrix_path)
-write_csv(adjacency_objects$area_neighbors_sym, adjacency_edges_path)
+write_csv(spatial_subset_area_counts_tbl, spatial_subset_area_counts_path)
 
-main_area_observed <- sort(unique(glmm_dat_spatial$area))
-unknown_main_areas <- setdiff(main_area_observed, area_universe)
+area_centroids_used_tbl <- area_centroids_tbl |>
+  filter(area %in% sort(unique(glmm_dat_spatial_depth$area))) |>
+  left_join(
+    spatial_subset_area_counts_tbl |>
+      select(area, n_rows_model_subset, mean_count_total, prop_depth_missing),
+    by = "area"
+  ) |>
+  arrange(area)
 
-if (length(unknown_main_areas) > 0) {
-  cat("Unknown main-subset areas not covered by area_universe:\n")
-  print(unknown_main_areas)
-  stop("main subset contains area labels outside area_universe.")
-}
+write_csv(area_centroids_used_tbl, area_centroids_used_path)
 
-main_areas_without_neighbors <- adjacency_objects$degree_tbl |>
-  filter(area %in% main_area_observed, number_of_neighbors == 0) |>
+main_areas_without_neighbors <- adjacency_diagnostics$degree_tbl |>
+  filter(area %in% sort(unique(glmm_dat_spatial_depth$area)), number_of_neighbors == 0) |>
   pull(area)
 
 cat("\n=== adjacency QA ===\n")
 cat("n_area_universe=", length(area_universe), "\n", sep = "")
-cat("n_undirected_edges=", adjacency_objects$n_undirected_edges, "\n", sep = "")
-cat("n_connected_components=", adjacency_objects$n_components, "\n", sep = "")
-cat("isolated_areas=", paste(adjacency_objects$isolated_areas, collapse = ","), "\n", sep = "")
+cat("n_undirected_edges=", sum(adjacency_matrix_full[upper.tri(adjacency_matrix_full)]), "\n", sep = "")
+cat("n_connected_components=", adjacency_diagnostics$n_components, "\n", sep = "")
+cat("isolated_areas=", if (length(adjacency_diagnostics$isolated_areas) == 0) "none" else paste(adjacency_diagnostics$isolated_areas, collapse = ","), "\n", sep = "")
+cat(
+  "adjacency_row_sums=",
+  paste(
+    paste0(adjacency_diagnostics$degree_tbl$area, ":", adjacency_diagnostics$degree_tbl$number_of_neighbors),
+    collapse = ","
+  ),
+  "\n",
+  sep = ""
+)
+cat("observed_geometry_areas=", paste(sort(unique(glmm_dat_spatial_depth$area)), collapse = ","), "\n", sep = "")
 
 if (length(main_areas_without_neighbors) > 0) {
   cat("Areas present in data but without neighbor definition:\n")
@@ -598,16 +714,16 @@ if (length(main_areas_without_neighbors) > 0) {
   warning("Some areas present in data have no adjacency neighbors.")
 }
 
-if (length(adjacency_objects$isolated_areas) > 0) {
+if (length(adjacency_diagnostics$isolated_areas) > 0) {
   warning("Isolated areas exist in adjacency_matrix.")
 }
 
-if (adjacency_objects$n_components >= 2) {
+if (adjacency_diagnostics$n_components >= 2) {
   warning("adjacency_matrix has 2 or more connected components.")
 }
 
 area_levels_model <- area_universe[area_universe %in% sort(unique(glmm_dat_spatial_depth$area))]
-adjacency_matrix_model <- adjacency_objects$adjacency_matrix[area_levels_model, area_levels_model, drop = FALSE]
+adjacency_matrix_model <- adjacency_matrix_full[area_levels_model, area_levels_model, drop = FALSE]
 
 glmm_dat_spatial_depth <- glmm_dat_spatial_depth |>
   mutate(
@@ -635,6 +751,34 @@ if (!identical(levels(glmm_dat_spatial_depth$area), rownames(adjacency_matrix_mo
 if (!identical(rownames(adjacency_matrix_model), colnames(adjacency_matrix_model))) {
   stop("adjacency_matrix rownames and colnames do not match.")
 }
+
+adjacency_segments_tbl <- adjacency_edges_to_segments(adjacency_edges_full, area_centroids_tbl)
+
+area_adjacency_graph <- ggplot() +
+  geom_sf(data = geometry_obj$poly_sf, fill = NA, color = "black", linewidth = 0.5) +
+  geom_segment(
+    data = adjacency_segments_tbl,
+    aes(x = lon_from, y = lat_from, xend = lon_to, yend = lat_to),
+    inherit.aes = FALSE,
+    color = "grey55",
+    linewidth = 0.5
+  ) +
+  geom_point(data = area_centroids_tbl, aes(x = lon, y = lat), inherit.aes = FALSE, color = "#C0392B", size = 2) +
+  geom_text(data = area_centroids_tbl, aes(x = lon, y = lat, label = area), inherit.aes = FALSE, nudge_y = 0.00045, size = 3.2) +
+  labs(
+    x = "Longitude",
+    y = "Latitude",
+    title = "Area adjacency graph"
+  ) +
+  theme_bw()
+
+ggsave(
+  filename = area_adjacency_graph_path,
+  plot = area_adjacency_graph,
+  width = 12,
+  height = 8,
+  dpi = 200
+)
 
 model_specs <- list(
   list(
@@ -772,7 +916,9 @@ empty_spatial_effects_plot_tbl <- tibble(
   effect_estimate = numeric(),
   number_of_neighbors = integer(),
   observed_mean_count = numeric(),
-  n_rows = integer()
+  n_rows = integer(),
+  lon = numeric(),
+  lat = numeric()
 )
 
 if (nrow(best_adjacency_row) == 1) {
@@ -796,12 +942,16 @@ if (nrow(best_adjacency_row) == 1) {
       .groups = "drop"
     ) |>
     left_join(
-      adjacency_objects$degree_tbl |>
+      adjacency_diagnostics$degree_tbl |>
         select(area, number_of_neighbors),
       by = "area"
     ) |>
+    left_join(
+      area_centroids_tbl,
+      by = "area"
+    ) |>
     left_join(best_spatial_area_effects_tbl, by = "area") |>
-    select(area, effect_estimate, number_of_neighbors, observed_mean_count, n_rows)
+    select(area, effect_estimate, number_of_neighbors, observed_mean_count, n_rows, lon, lat)
 } else {
   best_spatial_area_effects_tbl <- empty_spatial_effects_tbl
   best_spatial_area_effects_plot_tbl <- empty_spatial_effects_plot_tbl
@@ -851,6 +1001,91 @@ if (nrow(best_adjacency_row) == 1) {
 write_csv(best_nonspatial_area_residual_tbl, best_nonspatial_area_residuals_path)
 write_csv(best_adjacency_area_residual_tbl, best_adjacency_area_residuals_path)
 
+if (nrow(best_adjacency_row) == 1 && nrow(best_spatial_area_effects_plot_tbl) > 0) {
+  best_spatial_area_effects_map <- ggplot() +
+    geom_sf(data = geometry_obj$poly_sf, fill = NA, color = "black", linewidth = 0.5) +
+    geom_point(
+      data = best_spatial_area_effects_plot_tbl,
+      aes(x = lon, y = lat, color = effect_estimate),
+      inherit.aes = FALSE,
+      size = 3
+    ) +
+    geom_text(
+      data = best_spatial_area_effects_plot_tbl,
+      aes(x = lon, y = lat, label = area),
+      inherit.aes = FALSE,
+      nudge_y = 0.00045,
+      size = 3
+    ) +
+    scale_color_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0) +
+    labs(
+      x = "Longitude",
+      y = "Latitude",
+      color = "Area effect",
+      title = "Best adjacency area effects"
+    ) +
+    theme_bw()
+} else {
+  best_spatial_area_effects_map <- ggplot() + theme_void() + labs(title = "No adjacency model was fitted")
+}
+
+ggsave(
+  filename = best_spatial_area_effects_map_path,
+  plot = best_spatial_area_effects_map,
+  width = 12,
+  height = 8,
+  dpi = 200
+)
+
+if (nrow(best_nonspatial_row) == 1) {
+  best_nonspatial_year_index_tbl <- compute_year_index_table_by_prediction(
+    model_name = best_nonspatial_row$model_name[[1]],
+    fit_obj = best_nonspatial_fit,
+    data_obj = glmm_dat_spatial_depth
+  )
+} else {
+  best_nonspatial_year_index_tbl <- tibble(
+    model_name = character(),
+    year = character(),
+    response = numeric(),
+    prediction_mode = character(),
+    n_rows = integer()
+  )
+}
+
+if (nrow(best_adjacency_row) == 1) {
+  best_adjacency_year_index_tbl <- compute_year_index_table_by_prediction(
+    model_name = best_adjacency_row$model_name[[1]],
+    fit_obj = best_adjacency_fit,
+    data_obj = glmm_dat_spatial_depth
+  )
+} else {
+  best_adjacency_year_index_tbl <- tibble(
+    model_name = character(),
+    year = character(),
+    response = numeric(),
+    prediction_mode = character(),
+    n_rows = integer()
+  )
+}
+
+year_index_comparison_tbl <- bind_rows(
+  best_nonspatial_year_index_tbl |>
+    mutate(model_group = "best_nonspatial"),
+  best_adjacency_year_index_tbl |>
+    mutate(model_group = "best_adjacency")
+)
+
+write_csv(year_index_comparison_tbl, year_index_comparison_path)
+
+compared_nobs <- model_comparison_tbl |>
+  filter(fit_ok) |>
+  pull(nobs) |>
+  unique() |>
+  sort()
+
+same_subset_comparison_achieved <- length(compared_nobs) == 1 && identical(as.integer(compared_nobs[[1]]), as.integer(nrow(glmm_dat_spatial_depth)))
+
 failed_models <- model_comparison_tbl |>
   filter(!fit_ok) |>
   pull(model_name)
@@ -858,13 +1093,23 @@ failed_models <- model_comparison_tbl |>
 cat("\n=== summary ===\n")
 cat("best_nonspatial_model=", if (nrow(best_nonspatial_row) == 1) best_nonspatial_row$model_name[[1]] else NA_character_, "\n", sep = "")
 cat("best_adjacency_model=", if (nrow(best_adjacency_row) == 1) best_adjacency_row$model_name[[1]] else NA_character_, "\n", sep = "")
+cat("best_nonspatial_nobs=", if (nrow(best_nonspatial_row) == 1) best_nonspatial_row$nobs[[1]] else NA_integer_, "\n", sep = "")
+cat("best_adjacency_nobs=", if (nrow(best_adjacency_row) == 1) best_adjacency_row$nobs[[1]] else NA_integer_, "\n", sep = "")
+cat("same_subset_comparison_achieved=", same_subset_comparison_achieved, "\n", sep = "")
+cat("areas_in_geometry_subset=", paste(sort(unique(as.character(glmm_dat_spatial_depth$area))), collapse = ","), "\n", sep = "")
 cat("failed_models=", paste(failed_models, collapse = ","), "\n", sep = "")
 cat("main_areas_without_neighbors=", paste(main_areas_without_neighbors, collapse = ","), "\n", sep = "")
-cat("isolated_areas=", paste(adjacency_objects$isolated_areas, collapse = ","), "\n", sep = "")
+cat("isolated_areas=", if (length(adjacency_diagnostics$isolated_areas) == 0) "none" else paste(adjacency_diagnostics$isolated_areas, collapse = ","), "\n", sep = "")
 cat("model_comparison_path=", model_comparison_path, "\n", sep = "")
 cat("adjacency_matrix_path=", adjacency_matrix_path, "\n", sep = "")
 cat("adjacency_edges_path=", adjacency_edges_path, "\n", sep = "")
+cat("area_degree_table_path=", area_degree_table_path, "\n", sep = "")
+cat("area_centroids_used_path=", area_centroids_used_path, "\n", sep = "")
+cat("spatial_subset_area_counts_path=", spatial_subset_area_counts_path, "\n", sep = "")
+cat("area_adjacency_graph_path=", area_adjacency_graph_path, "\n", sep = "")
 cat("best_spatial_area_effects_path=", best_spatial_area_effects_path, "\n", sep = "")
 cat("best_spatial_area_effects_plot_path=", best_spatial_area_effects_plot_path, "\n", sep = "")
+cat("best_spatial_area_effects_map_path=", best_spatial_area_effects_map_path, "\n", sep = "")
 cat("best_nonspatial_area_residuals_path=", best_nonspatial_area_residuals_path, "\n", sep = "")
 cat("best_adjacency_area_residuals_path=", best_adjacency_area_residuals_path, "\n", sep = "")
+cat("year_index_comparison_path=", year_index_comparison_path, "\n", sep = "")
