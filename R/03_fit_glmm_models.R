@@ -866,6 +866,7 @@ best_model_table_tbl <- tibble::tibble()
 best_model_summary_tbl <- tibble::tibble()
 workflow_results <- list()
 
+#各 response（chu, dai, toku, tokudai, count_total）ごとに、候補モデル比較 → best model 選択 → 最終refit → 年指数作成 → 保存
 for (response_name in response_levels) {
   response_result <- tryCatch(
     {
@@ -977,7 +978,6 @@ for (response_name in response_levels) {
       raw_cpue_csv_path <- file.path("output", "tables", paste0("raw_cpue_best_", response_name, ".csv"))
       detail_txt_path <- file.path("output", "tables", paste0("best_model_detail_", response_name, ".txt"))
       dharma_csv_path <- file.path("output", "tables", paste0("dharma_best_", response_name, ".csv"))
-      index_fig_path <- file.path("output", "figures", paste0("index_best_", response_name, ".png"))
       index_ci_fig_path <- file.path("output", "figures", paste0("index_best_", response_name, "_ci.png"))
       overlay_fig_path <- file.path("output", "figures", paste0("overlay_best_", response_name, ".png"))
       dharma_fig_path <- file.path("output", "figures", paste0("diagnostic_best_", response_name, ".png"))
@@ -1021,7 +1021,6 @@ for (response_name in response_levels) {
         ),
         dharma_csv_path
       )
-      plot_year_index(standardized_index_tbl, index_fig_path, paste(response_name, "best model index"), show_ci = FALSE)
       plot_year_index(standardized_index_tbl, index_ci_fig_path, paste(response_name, "best model index with CI"), show_ci = TRUE)
       plot_overlay(overlay_tbl, overlay_fig_path, paste(response_name, "raw relative CPUE vs standardized index"))
 
@@ -1057,7 +1056,7 @@ for (response_name in response_levels) {
       cat("response =", response_name, "| final dataset rows =", final_dataset_rows, "\n")
       cat(
         "response =", response_name, "| saved file paths =",
-        paste(c(compare_csv_path, model_rds_path, year_index_csv_path, index_fig_path, index_ci_fig_path, overlay_fig_path), collapse = ", "),
+        paste(c(compare_csv_path, model_rds_path, year_index_csv_path, index_ci_fig_path, overlay_fig_path), collapse = ", "),
         "\n"
       )
 
