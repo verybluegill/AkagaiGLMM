@@ -26,7 +26,7 @@ parse_numeric_trim <- function(x) {
   suppressWarnings(as.numeric(x_chr))
 }
 
-parse_effort_hours <- function(x) {
+parse_duration_hours <- function(x) {
   if (inherits(x, "difftime")) {
     return(as.numeric(x, units = "hours"))
   }
@@ -203,10 +203,13 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
         !is.na(.data$area_end) & as.integer(.data$area_end) %in% valid_area_codes ~ as.integer(.data$area_end),
       TRUE ~ NA_integer_
     ),
-    effort_hours = parse_effort_hours(.data[[effort_col]]),
+    duration_hours = parse_duration_hours(.data[[effort_col]]),
     speed_kt = parse_numeric_trim(.data[[speed_col]]),
-    flag_effort_missing = is.na(.data$effort_hours),
-    flag_effort_nonpositive = !is.na(.data$effort_hours) & .data$effort_hours <= 0,
+    flag_duration_missing = is.na(.data$duration_hours),
+    flag_duration_nonpositive = !is.na(.data$duration_hours) & .data$duration_hours <= 0,
+    flag_speed_missing = is.na(.data$speed_kt),
+    flag_speed_nonpositive = !is.na(.data$speed_kt) & .data$speed_kt <= 0,
+    flag_speed_out_of_range = !is.na(.data$speed_kt) & (.data$speed_kt <= 0.5 | .data$speed_kt > 5),
     depth_raw_1 = suppressWarnings(as.numeric(.data[[depth_1_col]])),
     depth_raw_2 = suppressWarnings(as.numeric(.data[[depth_2_col]])),
     flag_depth_both_missing = is.na(.data$depth_raw_1) & is.na(.data$depth_raw_2),
@@ -225,11 +228,15 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     catch_sho = suppressWarnings(as.numeric(.data[[catch_sho_col]])),
     catch_shosho = suppressWarnings(as.numeric(.data[[catch_shosho_col]])),
     count_total_raw = suppressWarnings(as.numeric(.data[[catch_total_col]])),
-    cpue_total_raw = dplyr::if_else(!is.na(.data$effort_hours) & .data$effort_hours > 0, .data$catch_total / .data$effort_hours, NA_real_)
+    effort_default = dplyr::if_else(!is.na(.data$speed_kt) & .data$speed_kt > 0 & !is.na(.data$duration_hours) & .data$duration_hours > 0, .data$speed_kt * .data$duration_hours, NA_real_),
+    catch_total = .data$count_total_raw, # 現時点では raw 合計値と同じ。後段互換のため残す
+    cpue_total_raw = dplyr::if_else(!is.na(.data$effort_default) & .data$effort_default > 0, .data$catch_total / .data$effort_default, NA_real_),
+    cpue_total_duration_raw = dplyr::if_else(!is.na(.data$duration_hours) & .data$duration_hours > 0, .data$catch_total / .data$duration_hours, NA_real_)
   ) |>
   dplyr::select(
     "row_id",
     "year_reiwa_raw",
+    "year_raw",
     "month",
     "day",
     "ymd_reiwa",
@@ -240,10 +247,13 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     "area_start",
     "area_end",
     "area",
-    "effort_hours",
+    "duration_hours",
     "speed_kt",
-    "flag_effort_missing",
-    "flag_effort_nonpositive",
+    "flag_duration_missing",
+    "flag_duration_nonpositive",
+    "flag_speed_missing",
+    "flag_speed_nonpositive",
+    "flag_speed_out_of_range",
     "depth_raw_1",
     "depth_raw_2",
     "flag_depth_both_missing",
@@ -262,7 +272,9 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     "catch_sho",
     "catch_shosho",
     "count_total_raw",
-    "cpue_total_raw"
+    "effort_default",
+    "cpue_total_raw",
+    "cpue_total_duration_raw"
   )
 
 date_year_summary <- raw_tbl |>
@@ -291,20 +303,33 @@ depth_rule_check_summary <- tibble::tibble(
   )
 )
 
-effort_check_summary <- tibble::tibble(
-  metric = c("rows_total", "effort_missing_n", "effort_nonpositive_n", "effort_valid_n"),
+duration_check_summary <- tibble::tibble(
+  metric = c("rows_total", "duration_missing_n", "duration_nonpositive_n", "duration_valid_n"),
   value = c(
     nrow(raw_tbl),
-    sum(raw_tbl$flag_effort_missing, na.rm = TRUE),
-    sum(raw_tbl$flag_effort_nonpositive, na.rm = TRUE),
-    sum(!raw_tbl$flag_effort_missing & !raw_tbl$flag_effort_nonpositive, na.rm = TRUE)
+    sum(raw_tbl$flag_duration_missing, na.rm = TRUE),
+    sum(raw_tbl$flag_duration_nonpositive, na.rm = TRUE),
+    sum(!raw_tbl$flag_duration_missing & !raw_tbl$flag_duration_nonpositive, na.rm = TRUE)
+  )
+)
+
+speed_check_summary <- tibble::tibble(
+  metric = c("rows_total", "speed_missing_n", "speed_nonpositive_n", "speed_out_of_range_n", "speed_valid_n", "effort_default_missing_n", "effort_default_valid_n"),
+  value = c(
+    nrow(raw_tbl),
+    sum(raw_tbl$flag_speed_missing, na.rm = TRUE),
+    sum(raw_tbl$flag_speed_nonpositive, na.rm = TRUE),
+    sum(raw_tbl$flag_speed_out_of_range, na.rm = TRUE),
+    sum(!raw_tbl$flag_speed_missing & !raw_tbl$flag_speed_nonpositive & !raw_tbl$flag_speed_out_of_range, na.rm = TRUE),
+    sum(is.na(raw_tbl$effort_default), na.rm = TRUE),
+    sum(!is.na(raw_tbl$effort_default), na.rm = TRUE)
   )
 )
 
 data_cleaning_candidates <- tibble::tibble(
   candidate = c(
     "Keep out-of-scope years as NA with flag",
-    "Use effort_hours only",
+    "Use duration_hours and speed_kt for effort_default",
     "Use depth_use final rule only",
     "Review rows with both depth > 70 m",
     "Review rows with one depth <= 70 and one > 70",
@@ -312,7 +337,7 @@ data_cleaning_candidates <- tibble::tibble(
   ),
   reason = c(
     "Period outside 2020 to 2024 should be retained for checking",
-    "A single effort variable simplifies later CPUE and offset handling",
+    "Default effort is defined as speed times duration for later CPUE and offset handling",
     "A single depth variable simplifies later model comparison",
     "Both depths over 70 m are outside the intended shallow range",
     "Mixed shallow and deep values need explicit review but can still use the smaller depth",
@@ -322,13 +347,13 @@ data_cleaning_candidates <- tibble::tibble(
 
 model_structure_candidates <- tibble::tibble(
   candidate = c(
-    "Count model with log(effort_hours) offset",
+    "Count model with log(effort_default) offset",
     "CPUE summary for annual comparison",
     "Depth effect with depth_use",
     "Area effect with cleaned area-year CPUE"
   ),
   note = c(
-    "Retain raw catch and effort for future GLMM",
+    "Retain raw catch, duration, speed, and effort_default for future GLMM",
     "Use annual ratio CPUE for descriptive figures",
     "Use one final depth variable instead of multiple variants",
     "Use cleaned data only when comparing spatial CPUE"
@@ -352,7 +377,8 @@ extreme_cpue_candidate_rows <- raw_tbl |>
 save_check_csv(raw_tbl, file.path("output", "check_tables", "raw_data_check.csv"))
 save_check_csv(date_year_summary, file.path("output", "check_tables", "date_year_summary.csv"))
 save_check_csv(depth_rule_check_summary, file.path("output", "check_tables", "depth_rule_check_summary.csv"))
-save_check_csv(effort_check_summary, file.path("output", "check_tables", "effort_check_summary.csv"))
+save_check_csv(duration_check_summary, file.path("output", "check_tables", "duration_check_summary.csv"))
+save_check_csv(speed_check_summary, file.path("output", "check_tables", "speed_check_summary.csv"))
 save_check_csv(data_cleaning_candidates, file.path("output", "check_tables", "data_cleaning_candidates.csv"))
 save_check_csv(model_structure_candidates, file.path("output", "check_tables", "model_structure_candidates.csv"))
 save_check_csv(depth_both_gt70_rows, file.path("output", "check_tables", "depth_both_gt70_rows.csv"))
@@ -372,8 +398,11 @@ cat("vessel_na_n=", sum(is.na(raw_tbl$vessel)), "\n", sep = "")
 cat("area_na_n=", sum(is.na(raw_tbl$area)), "\n", sep = "")
 cat("month_na_n=", sum(is.na(raw_tbl$month)), "\n", sep = "")
 cat("day_na_n=", sum(is.na(raw_tbl$day)), "\n", sep = "")
-cat("effort missing n =", sum(raw_tbl$flag_effort_missing, na.rm = TRUE), "\n")
-cat("effort nonpositive n =", sum(raw_tbl$flag_effort_nonpositive, na.rm = TRUE), "\n")
+cat("duration missing n =", sum(raw_tbl$flag_duration_missing, na.rm = TRUE), "\n")
+cat("duration nonpositive n =", sum(raw_tbl$flag_duration_nonpositive, na.rm = TRUE), "\n")
+cat("speed missing n =", sum(raw_tbl$flag_speed_missing, na.rm = TRUE), "\n")
+cat("speed out of range n =", sum(raw_tbl$flag_speed_out_of_range, na.rm = TRUE), "\n")
+cat("effort_default missing n =", sum(is.na(raw_tbl$effort_default), na.rm = TRUE), "\n")
 cat("depth both missing n =", sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE), "\n")
 cat("depth only one n =", sum(raw_tbl$flag_depth_only_one, na.rm = TRUE), "\n")
 cat("depth both <= 70 n =", sum(raw_tbl$flag_depth_both_le_70, na.rm = TRUE), "\n")
