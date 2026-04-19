@@ -4,6 +4,7 @@
 # =========================================
 
 source(file.path("R", "00_load_packages.R"))
+source(file.path("R", "utils_cleaning.R"))
 
 load_project_packages(
   required_pkgs = c("dplyr", "ggplot2", "lubridate", "readr", "readxl", "scales", "stringr", "tidyr", "tibble"),
@@ -18,12 +19,6 @@ excel_path <- file.path("ActualData", "Akagai_sheet.xlsx")
 save_check_csv <- function(data, path) {
   readr::write_csv(data, path, na = "")
   cat("saved:", path, "\n")
-}
-
-parse_numeric_trim <- function(x) {
-  x_chr <- trimws(as.character(x))
-  x_chr[x_chr %in% c("", "NA", "NaN")] <- NA_character_
-  suppressWarnings(as.numeric(x_chr))
 }
 
 parse_duration_hours <- function(x) {
@@ -61,20 +56,6 @@ parse_duration_hours <- function(x) {
 
   out
 }
-
-make_depth_use <- function(depth_raw_1, depth_raw_2) {
-  dplyr::case_when(
-    is.na(depth_raw_1) & is.na(depth_raw_2) ~ NA_real_,
-    !is.na(depth_raw_1) & is.na(depth_raw_2) ~ depth_raw_1,
-    is.na(depth_raw_1) & !is.na(depth_raw_2) ~ depth_raw_2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 <= 70 & depth_raw_2 <= 70 ~ (depth_raw_1 + depth_raw_2) / 2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & ((depth_raw_1 <= 70 & depth_raw_2 > 70) | (depth_raw_1 > 70 & depth_raw_2 <= 70)) ~ pmin(depth_raw_1, depth_raw_2),
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > 70 & depth_raw_2 > 70 ~ NA_real_,
-    TRUE ~ NA_real_
-  )
-}
-
-valid_area_codes <- c(151L, 152L, 161L, 162L, 171L, 172L, 181L, 182L, 191L, 192L, 201L, 202L, 203L, 212L, 213L, 214L, 223L, 224L)
 
 make_date_year_check_plot <- function(raw_tbl, output_png) {
   date_tbl <- raw_tbl |>
@@ -210,8 +191,6 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     flag_speed_missing = is.na(.data$speed_kt),
     flag_speed_nonpositive = !is.na(.data$speed_kt) & .data$speed_kt <= 0,
     flag_speed_out_of_range = !is.na(.data$speed_kt) & (.data$speed_kt <= 0.5 | .data$speed_kt > 5),
-    flag_speed_imputed = .data$flag_speed_missing | .data$flag_speed_nonpositive | .data$flag_speed_out_of_range,
-    speed_kt_for_effort = dplyr::if_else(.data$flag_speed_imputed, 3, .data$speed_kt), # 欠損・異常 speed を 3 kt で補完した effort 計算用 speed
     depth_raw_1 = suppressWarnings(as.numeric(.data[[depth_1_col]])),
     depth_raw_2 = suppressWarnings(as.numeric(.data[[depth_2_col]])),
     flag_depth_both_missing = is.na(.data$depth_raw_1) & is.na(.data$depth_raw_2),
@@ -230,10 +209,7 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     catch_sho = suppressWarnings(as.numeric(.data[[catch_sho_col]])),
     catch_shosho = suppressWarnings(as.numeric(.data[[catch_shosho_col]])),
     count_total_raw = suppressWarnings(as.numeric(.data[[catch_total_col]])),
-    effort_default = dplyr::if_else(!is.na(.data$duration_hours) & .data$duration_hours > 0, .data$speed_kt_for_effort * .data$duration_hours, NA_real_),
-    catch_total = .data$count_total_raw, # 現時点では raw 合計値と同じ。後段互換のため残す
-    cpue_total_raw = dplyr::if_else(!is.na(.data$effort_default) & .data$effort_default > 0, .data$catch_total / .data$effort_default, NA_real_),
-    cpue_total_duration_raw = dplyr::if_else(!is.na(.data$duration_hours) & .data$duration_hours > 0, .data$catch_total / .data$duration_hours, NA_real_)
+    catch_total = .data$count_total_raw # 現時点では raw 合計値と同じ。後段互換のため残す
   ) |>
   dplyr::select(
     "row_id",
@@ -251,13 +227,11 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     "area",
     "duration_hours",
     "speed_kt",
-    "speed_kt_for_effort",
     "flag_duration_missing",
     "flag_duration_nonpositive",
     "flag_speed_missing",
     "flag_speed_nonpositive",
     "flag_speed_out_of_range",
-    "flag_speed_imputed",
     "depth_raw_1",
     "depth_raw_2",
     "flag_depth_both_missing",
@@ -275,10 +249,7 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     "catch_ware",
     "catch_sho",
     "catch_shosho",
-    "count_total_raw",
-    "effort_default",
-    "cpue_total_raw",
-    "cpue_total_duration_raw"
+    "count_total_raw"
   )
 
 date_year_summary <- raw_tbl |>
@@ -318,50 +289,12 @@ duration_check_summary <- tibble::tibble(
 )
 
 speed_check_summary <- tibble::tibble(
-  metric = c("rows_total", "speed_missing_n", "speed_nonpositive_n", "speed_out_of_range_n", "speed_imputed_n", "speed_valid_n", "effort_default_missing_n", "effort_default_valid_n"),
+  metric = c("rows_total", "speed_missing_n", "speed_nonpositive_n", "speed_out_of_range_n"),
   value = c(
     nrow(raw_tbl),
     sum(raw_tbl$flag_speed_missing, na.rm = TRUE),
     sum(raw_tbl$flag_speed_nonpositive, na.rm = TRUE),
-    sum(raw_tbl$flag_speed_out_of_range, na.rm = TRUE),
-    sum(raw_tbl$flag_speed_imputed, na.rm = TRUE),
-    sum(!raw_tbl$flag_speed_imputed, na.rm = TRUE),
-    sum(is.na(raw_tbl$effort_default), na.rm = TRUE),
-    sum(!is.na(raw_tbl$effort_default), na.rm = TRUE)
-  )
-)
-
-data_cleaning_candidates <- tibble::tibble(
-  candidate = c(
-    "Keep out-of-scope years as NA with flag",
-    "Use duration_hours and speed_kt for effort_default",
-    "Use depth_use final rule only",
-    "Review rows with both depth > 70 m",
-    "Review rows with one depth <= 70 and one > 70",
-    "Review extreme CPUE candidates"
-  ),
-  reason = c(
-    "Period outside 2020 to 2024 should be retained for checking",
-    "Default effort is defined as speed times duration for later CPUE and offset handling",
-    "A single depth variable simplifies later model comparison",
-    "Both depths over 70 m are outside the intended shallow range",
-    "Mixed shallow and deep values need explicit review but can still use the smaller depth",
-    "Large CPUE values may reflect short effort or data entry issues"
-  )
-)
-
-model_structure_candidates <- tibble::tibble(
-  candidate = c(
-    "Count model with log(effort_default) offset",
-    "CPUE summary for annual comparison",
-    "Depth effect with depth_use",
-    "Area effect with cleaned area-year CPUE"
-  ),
-  note = c(
-    "Retain raw catch, duration, speed, and effort_default for future GLMM",
-    "Use annual ratio CPUE for descriptive figures",
-    "Use one final depth variable instead of multiple variants",
-    "Use cleaned data only when comparing spatial CPUE"
+    sum(raw_tbl$flag_speed_out_of_range, na.rm = TRUE)
   )
 )
 
@@ -371,24 +304,13 @@ depth_both_gt70_rows <- raw_tbl |>
 depth_one_le70_one_gt70_rows <- raw_tbl |>
   dplyr::filter(.data$flag_depth_one_le_70_one_gt_70)
 
-extreme_cpue_cutoff <- stats::quantile(raw_tbl$cpue_total_raw, probs = 0.99, na.rm = TRUE, names = FALSE)
-if (!is.finite(extreme_cpue_cutoff)) {
-  extreme_cpue_cutoff <- Inf
-}
-
-extreme_cpue_candidate_rows <- raw_tbl |>
-  dplyr::filter(!is.na(.data$cpue_total_raw), .data$cpue_total_raw >= extreme_cpue_cutoff)
-
 save_check_csv(raw_tbl, file.path("output", "check_tables", "raw_data_check.csv"))
 save_check_csv(date_year_summary, file.path("output", "check_tables", "date_year_summary.csv"))
 save_check_csv(depth_rule_check_summary, file.path("output", "check_tables", "depth_rule_check_summary.csv"))
 save_check_csv(duration_check_summary, file.path("output", "check_tables", "duration_check_summary.csv"))
 save_check_csv(speed_check_summary, file.path("output", "check_tables", "speed_check_summary.csv"))
-save_check_csv(data_cleaning_candidates, file.path("output", "check_tables", "data_cleaning_candidates.csv"))
-save_check_csv(model_structure_candidates, file.path("output", "check_tables", "model_structure_candidates.csv"))
 save_check_csv(depth_both_gt70_rows, file.path("output", "check_tables", "depth_both_gt70_rows.csv"))
 save_check_csv(depth_one_le70_one_gt70_rows, file.path("output", "check_tables", "depth_one_le70_one_gt70_rows.csv"))
-save_check_csv(extreme_cpue_candidate_rows, file.path("output", "check_tables", "extreme_cpue_candidate_rows.csv"))
 
 make_date_year_check_plot(raw_tbl, file.path("output", "check_figures", "date_year_check.png"))
 make_depth_histogram_plot(raw_tbl, file.path("output", "check_figures", "depth_histogram_raw.png"))
@@ -407,8 +329,6 @@ cat("duration missing n =", sum(raw_tbl$flag_duration_missing, na.rm = TRUE), "\
 cat("duration nonpositive n =", sum(raw_tbl$flag_duration_nonpositive, na.rm = TRUE), "\n")
 cat("speed missing n =", sum(raw_tbl$flag_speed_missing, na.rm = TRUE), "\n")
 cat("speed out of range n =", sum(raw_tbl$flag_speed_out_of_range, na.rm = TRUE), "\n")
-cat("speed imputed n =", sum(raw_tbl$flag_speed_imputed, na.rm = TRUE), "\n")
-cat("effort_default missing n =", sum(is.na(raw_tbl$effort_default), na.rm = TRUE), "\n")
 cat("depth both missing n =", sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE), "\n")
 cat("depth only one n =", sum(raw_tbl$flag_depth_only_one, na.rm = TRUE), "\n")
 cat("depth both <= 70 n =", sum(raw_tbl$flag_depth_both_le_70, na.rm = TRUE), "\n")

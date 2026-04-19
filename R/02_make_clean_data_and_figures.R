@@ -4,6 +4,7 @@
 # =========================================
 
 source(file.path("R", "00_load_packages.R"))
+source(file.path("R", "utils_cleaning.R"))
 
 load_project_packages(
   required_pkgs = c("dplyr", "ggplot2", "readr", "scales", "stringr", "tidyr", "tibble"),
@@ -24,30 +25,11 @@ save_check_csv <- function(data, path) {
   cat("saved:", path, "\n")
 }
 
-parse_numeric_trim <- function(x) {
-  x_chr <- trimws(as.character(x))
-  x_chr[x_chr %in% c("", "NA", "NaN")] <- NA_character_
-  suppressWarnings(as.numeric(x_chr))
-}
-
-valid_area_codes <- c(151L, 152L, 161L, 162L, 171L, 172L, 181L, 182L, 191L, 192L, 201L, 202L, 203L, 212L, 213L, 214L, 223L, 224L)
-
-make_depth_use <- function(depth_raw_1, depth_raw_2) {
-  dplyr::case_when(
-    is.na(depth_raw_1) & is.na(depth_raw_2) ~ NA_real_,
-    !is.na(depth_raw_1) & is.na(depth_raw_2) ~ depth_raw_1,
-    is.na(depth_raw_1) & !is.na(depth_raw_2) ~ depth_raw_2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 <= 70 & depth_raw_2 <= 70 ~ (depth_raw_1 + depth_raw_2) / 2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & ((depth_raw_1 <= 70 & depth_raw_2 > 70) | (depth_raw_1 > 70 & depth_raw_2 <= 70)) ~ pmin(depth_raw_1, depth_raw_2),
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > 70 & depth_raw_2 > 70 ~ NA_real_,
-    TRUE ~ NA_real_
-  )
-}
-
 build_glmm_input_tbl <- function(raw_tbl) {
   area_start_src <- if ("area_start" %in% names(raw_tbl)) raw_tbl$area_start else raw_tbl$area
   area_end_src <- if ("area_end" %in% names(raw_tbl)) raw_tbl$area_end else raw_tbl$area
   speed_src <- if ("speed_kt" %in% names(raw_tbl)) raw_tbl$speed_kt else rep(NA_real_, nrow(raw_tbl))
+  duration_hours_src <- if ("duration_hours" %in% names(raw_tbl)) raw_tbl$duration_hours else raw_tbl$effort_hours
   count_total_raw_src <- if ("count_total_raw" %in% names(raw_tbl)) raw_tbl$count_total_raw else raw_tbl$catch_total
   catch_ware_src <- if ("catch_ware" %in% names(raw_tbl)) raw_tbl$catch_ware else rep(0, nrow(raw_tbl))
   catch_sho_src <- if ("catch_sho" %in% names(raw_tbl)) raw_tbl$catch_sho else rep(0, nrow(raw_tbl))
@@ -124,7 +106,7 @@ build_glmm_input_tbl <- function(raw_tbl) {
       speed_kt_raw = parse_numeric_trim(.env$speed_src),
       flag_speed_replaced = is.na(.data$speed_kt_raw) | .data$speed_kt_raw <= 0.5 | .data$speed_kt_raw > 5,
       speed_kt = dplyr::if_else(.data$flag_speed_replaced, 3, .data$speed_kt_raw),
-      duration_min_raw = suppressWarnings(as.numeric(.data$effort_hours)) * 60,
+      duration_min_raw = suppressWarnings(as.numeric(.env$duration_hours_src)) * 60,
       flag_duration_replaced = is.na(.data$duration_min_raw) | .data$duration_min_raw <= 10 | .data$duration_min_raw > 90,
       duration_min_glmm = dplyr::if_else(.data$flag_duration_replaced, 60, .data$duration_min_raw),
       flag_duration_missing = is.na(.data$duration_min_raw),
