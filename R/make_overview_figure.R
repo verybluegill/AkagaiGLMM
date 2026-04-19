@@ -233,24 +233,33 @@ choose_best_date_vector <- function(candidate_list) {
     return(list(name = NA_character_, date = rep(as.Date(NA), 0), success_rate = NA_real_))
   }
 
+  analysis_period <- get_akagai_analysis_period()
   score_tbl <- dplyr::bind_rows(lapply(names(candidate_list), function(name_i) {
     date_i <- candidate_list[[name_i]]
     year_i <- suppressWarnings(as.integer(format(date_i, "%Y")))
+    in_period_i <- !is.na(date_i) & date_i >= analysis_period[[1]] & date_i <= analysis_period[[2]]
     tibble::tibble(
       candidate_name = name_i,
       success_rate = mean(!is.na(date_i)),
+      in_period_rate = mean(in_period_i),
+      in_period_count = sum(in_period_i),
       in_range_rate = mean(year_i %in% 2020:2024, na.rm = TRUE),
-      in_range_count = sum(year_i %in% 2020:2024, na.rm = TRUE)
+      in_range_count = sum(year_i %in% 2020:2024, na.rm = TRUE),
+      min_date = if (all(is.na(date_i))) as.Date(NA) else min(date_i, na.rm = TRUE),
+      max_date = if (all(is.na(date_i))) as.Date(NA) else max(date_i, na.rm = TRUE),
+      year_range = if (all(is.na(year_i))) NA_character_ else paste(range(year_i, na.rm = TRUE), collapse = " to ")
     )
   }))
 
   score_tbl <- score_tbl |>
-    dplyr::arrange(dplyr::desc(.data$in_range_count), dplyr::desc(.data$success_rate))
+    dplyr::arrange(dplyr::desc(.data$in_period_count), dplyr::desc(.data$in_range_count), dplyr::desc(.data$success_rate))
 
   best_name <- score_tbl$candidate_name[[1]]
+  fallback_name <- if (nrow(score_tbl) >= 2) score_tbl$candidate_name[[2]] else NA_character_
 
   list(
     name = best_name,
+    fallback_name = fallback_name,
     date = candidate_list[[best_name]],
     success_rate = score_tbl$success_rate[[1]],
     score_table = score_tbl
@@ -369,9 +378,11 @@ clean_akagai_data <- function(dat) {
   cat("detected count column =", clean_name_for_display(detected_cols$count %||% NA_character_), "\n")
 
   date_candidates <- list()
+  date_candidate_comparison <- tibble::tibble()
 
-  if (!is.null(detected_cols$date)) {
-    date_candidates[[paste0("direct:", detected_cols$date)]] <- parse_date_flexibly(dat[[detected_cols$date]])
+  for (col_i in date_candidate_cols) {
+    parsed_i <- parse_date_flexibly(dat[[col_i]])
+    date_candidates[[paste0("direct:", col_i)]] <- parsed_i
   }
 
   if (!is.null(detected_cols$year) && !is.null(detected_cols$month) && !is.null(detected_cols$day)) {
@@ -389,11 +400,34 @@ clean_akagai_data <- function(dat) {
     )
   }
 
+  if (length(date_candidates) > 0) {
+    date_candidate_comparison <- dplyr::bind_rows(lapply(names(date_candidates), function(name_i) {
+      raw_col <- sub("^direct:", "", name_i)
+      raw_value <- if (startsWith(name_i, "direct:") && raw_col %in% names(dat)) dat[[raw_col]] else rep(NA, nrow(dat))
+      parsed_i <- date_candidates[[name_i]]
+      parsed_year_i <- suppressWarnings(as.integer(format(parsed_i, "%Y")))
+
+      tibble::tibble(
+        candidate_name = name_i,
+        source_column = if (startsWith(name_i, "direct:")) raw_col else name_i,
+        source_class = if (startsWith(name_i, "direct:")) paste(class(raw_value), collapse = " / ") else "derived",
+        na_rate = if (startsWith(name_i, "direct:")) mean(is.na(raw_value)) else NA_real_,
+        parse_success_rate = mean(!is.na(parsed_i)),
+        min_parsed_date = if (all(is.na(parsed_i))) as.Date(NA) else min(parsed_i, na.rm = TRUE),
+        max_parsed_date = if (all(is.na(parsed_i))) as.Date(NA) else max(parsed_i, na.rm = TRUE),
+        year_range = if (all(is.na(parsed_year_i))) NA_character_ else paste(range(parsed_year_i, na.rm = TRUE), collapse = " to ")
+      )
+    }))
+  }
+  save_check_table(date_candidate_comparison, file.path("output", "check_tables", "date_candidate_comparison.csv"))
+
   chosen_date <- choose_best_date_vector(date_candidates)
   parsed_date <- chosen_date$date
   parsed_year <- suppressWarnings(as.integer(format(parsed_date, "%Y")))
   parsed_month <- suppressWarnings(as.integer(format(parsed_date, "%m")))
 
+  cat("chosen date column =", clean_name_for_display(chosen_date$name %||% NA_character_), "\n")
+  cat("fallback date column =", clean_name_for_display(chosen_date$fallback_name %||% NA_character_), "\n")
   cat("date parse success rate =", round(chosen_date$success_rate, 4), "\n")
   if (!is.null(chosen_date$score_table)) {
     print(chosen_date$score_table)
@@ -437,11 +471,22 @@ clean_akagai_data <- function(dat) {
     dplyr::filter(!is.na(.data$parsed_date), (.data$parsed_date < analysis_period[[1]] | .data$parsed_date > analysis_period[[2]]))
   save_check_table(suspicious_date_rows, file.path("output", "check_tables", "suspicious_date_rows.csv"))
 
-  filtered_row_id <- dat |>
+  filtered_tbl <- dat |>
     dplyr::mutate(year = parsed_year, parsed_date = parsed_date) |>
     dplyr::filter(.data$year %in% 2020:2024, !is.na(.data$parsed_date), .data$parsed_date >= analysis_period[[1]], .data$parsed_date <= analysis_period[[2]]) |>
-    dplyr::pull(.data$row_id)
+    dplyr::select("row_id", "year", "parsed_date")
+  filtered_row_id <- filtered_tbl$row_id
 
+  date_out_of_scope_rows <- dat |>
+    dplyr::mutate(year = parsed_year, parsed_date = parsed_date) |>
+    dplyr::filter(is.na(.data$year) | !(.data$year %in% 2020:2024) | is.na(.data$parsed_date) | .data$parsed_date < analysis_period[[1]] | .data$parsed_date > analysis_period[[2]])
+  save_check_table(date_out_of_scope_rows, file.path("output", "check_tables", "date_out_of_scope_rows.csv"))
+
+  cat("years before filter =\n")
+  print(table(parsed_year, useNA = "ifany"))
+  cat("years after filter =\n")
+  print(table(filtered_tbl$year, useNA = "ifany"))
+  cat("removed rows for invalid year =", nrow(date_out_of_scope_rows), "\n")
   cat("filtered year table =\n")
   print(table(parsed_year[dat$row_id %in% filtered_row_id], useNA = "ifany"))
 
@@ -576,6 +621,9 @@ clean_akagai_data <- function(dat) {
   )
 
   attr(clean_dat, "column_map") <- column_map
+  attr(clean_dat, "date_candidate_comparison") <- date_candidate_comparison
+  attr(clean_dat, "chosen_date_column") <- chosen_date$name
+  attr(clean_dat, "fallback_date_column") <- chosen_date$fallback_name
   attr(clean_dat, "raw_names") <- raw_names
   attr(clean_dat, "cleaned_names") <- cleaned_names
   attr(clean_dat, "size_structure") <- size_structure
