@@ -10,15 +10,17 @@ parse_numeric_trim <- function(x) {
   suppressWarnings(as.numeric(x_chr))
 }
 
+depth_threshold_m <- 150
+
 # 深度2列から既存ルールどおりに利用深度を決める
 make_depth_use <- function(depth_raw_1, depth_raw_2) {
   dplyr::case_when(
     is.na(depth_raw_1) & is.na(depth_raw_2) ~ NA_real_,
     !is.na(depth_raw_1) & is.na(depth_raw_2) ~ depth_raw_1,
     is.na(depth_raw_1) & !is.na(depth_raw_2) ~ depth_raw_2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 <= 70 & depth_raw_2 <= 70 ~ (depth_raw_1 + depth_raw_2) / 2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & ((depth_raw_1 <= 70 & depth_raw_2 > 70) | (depth_raw_1 > 70 & depth_raw_2 <= 70)) ~ pmin(depth_raw_1, depth_raw_2),
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > 70 & depth_raw_2 > 70 ~ NA_real_,
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 <= depth_threshold_m & depth_raw_2 <= depth_threshold_m ~ (depth_raw_1 + depth_raw_2) / 2,
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & ((depth_raw_1 <= depth_threshold_m & depth_raw_2 > depth_threshold_m) | (depth_raw_1 > depth_threshold_m & depth_raw_2 <= depth_threshold_m)) ~ pmin(depth_raw_1, depth_raw_2),
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > depth_threshold_m & depth_raw_2 > depth_threshold_m ~ NA_real_,
     TRUE ~ NA_real_
   )
 }

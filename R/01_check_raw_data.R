@@ -196,9 +196,9 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     flag_depth_both_missing = is.na(.data$depth_raw_1) & is.na(.data$depth_raw_2),
     flag_depth_only_one = xor(is.na(.data$depth_raw_1), is.na(.data$depth_raw_2)),
     flag_depth_both_present = !is.na(.data$depth_raw_1) & !is.na(.data$depth_raw_2),
-    flag_depth_both_le_70 = .data$flag_depth_both_present & .data$depth_raw_1 <= 70 & .data$depth_raw_2 <= 70,
-    flag_depth_one_le_70_one_gt_70 = .data$flag_depth_both_present & ((.data$depth_raw_1 <= 70 & .data$depth_raw_2 > 70) | (.data$depth_raw_1 > 70 & .data$depth_raw_2 <= 70)),
-    flag_depth_both_gt_70 = .data$flag_depth_both_present & .data$depth_raw_1 > 70 & .data$depth_raw_2 > 70,
+    flag_depth_both_le_150 = .data$flag_depth_both_present & .data$depth_raw_1 <= depth_threshold_m & .data$depth_raw_2 <= depth_threshold_m,
+    flag_depth_one_le_150_one_gt_150 = .data$flag_depth_both_present & ((.data$depth_raw_1 <= depth_threshold_m & .data$depth_raw_2 > depth_threshold_m) | (.data$depth_raw_1 > depth_threshold_m & .data$depth_raw_2 <= depth_threshold_m)),
+    flag_depth_both_gt_150 = .data$flag_depth_both_present & .data$depth_raw_1 > depth_threshold_m & .data$depth_raw_2 > depth_threshold_m,
     depth_use_raw_rule = make_depth_use(.data$depth_raw_1, .data$depth_raw_2),
     catch_total = suppressWarnings(as.numeric(.data[[catch_total_col]])),
     catch_medium = suppressWarnings(as.numeric(.data[[catch_medium_col]])),
@@ -237,9 +237,9 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     "flag_depth_both_missing",
     "flag_depth_only_one",
     "flag_depth_both_present",
-    "flag_depth_both_le_70",
-    "flag_depth_one_le_70_one_gt_70",
-    "flag_depth_both_gt_70",
+    "flag_depth_both_le_150",
+    "flag_depth_one_le_150_one_gt_150",
+    "flag_depth_both_gt_150",
     "depth_use_raw_rule",
     "catch_total",
     "catch_medium",
@@ -262,18 +262,18 @@ depth_rule_check_summary <- tibble::tibble(
     "depth_both_missing_n",
     "depth_only_one_n",
     "depth_both_present_n",
-    "depth_both_le_70_n",
-    "depth_one_le_70_one_gt_70_n",
-    "depth_both_gt_70_n",
+    "depth_both_le_150_n",
+    "depth_one_le_150_one_gt_150_n",
+    "depth_both_gt_150_n",
     "depth_use_raw_rule_missing_n"
   ),
   value = c(
     sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE),
     sum(raw_tbl$flag_depth_only_one, na.rm = TRUE),
     sum(raw_tbl$flag_depth_both_present, na.rm = TRUE),
-    sum(raw_tbl$flag_depth_both_le_70, na.rm = TRUE),
-    sum(raw_tbl$flag_depth_one_le_70_one_gt_70, na.rm = TRUE),
-    sum(raw_tbl$flag_depth_both_gt_70, na.rm = TRUE),
+    sum(raw_tbl$flag_depth_both_le_150, na.rm = TRUE),
+    sum(raw_tbl$flag_depth_one_le_150_one_gt_150, na.rm = TRUE),
+    sum(raw_tbl$flag_depth_both_gt_150, na.rm = TRUE),
     sum(is.na(raw_tbl$depth_use_raw_rule), na.rm = TRUE)
   )
 )
@@ -298,19 +298,19 @@ speed_check_summary <- tibble::tibble(
   )
 )
 
-depth_both_gt70_rows <- raw_tbl |>
-  dplyr::filter(.data$flag_depth_both_gt_70)
+depth_both_gt150_rows <- raw_tbl |>
+  dplyr::filter(.data$flag_depth_both_gt_150)
 
-depth_one_le70_one_gt70_rows <- raw_tbl |>
-  dplyr::filter(.data$flag_depth_one_le_70_one_gt_70)
+depth_one_le150_one_gt150_rows <- raw_tbl |>
+  dplyr::filter(.data$flag_depth_one_le_150_one_gt_150)
 
 save_check_csv(raw_tbl, file.path("output", "check_tables", "raw_data_check.csv"))
 save_check_csv(date_year_summary, file.path("output", "check_tables", "date_year_summary.csv"))
 save_check_csv(depth_rule_check_summary, file.path("output", "check_tables", "depth_rule_check_summary.csv"))
 save_check_csv(duration_check_summary, file.path("output", "check_tables", "duration_check_summary.csv"))
 save_check_csv(speed_check_summary, file.path("output", "check_tables", "speed_check_summary.csv"))
-save_check_csv(depth_both_gt70_rows, file.path("output", "check_tables", "depth_both_gt70_rows.csv"))
-save_check_csv(depth_one_le70_one_gt70_rows, file.path("output", "check_tables", "depth_one_le70_one_gt70_rows.csv"))
+save_check_csv(depth_both_gt150_rows, file.path("output", "check_tables", "depth_both_gt150_rows.csv"))
+save_check_csv(depth_one_le150_one_gt150_rows, file.path("output", "check_tables", "depth_one_le150_one_gt150_rows.csv"))
 
 make_date_year_check_plot(raw_tbl, file.path("output", "check_figures", "date_year_check.png"))
 make_depth_histogram_plot(raw_tbl, file.path("output", "check_figures", "depth_histogram_raw.png"))
@@ -331,6 +331,6 @@ cat("speed missing n =", sum(raw_tbl$flag_speed_missing, na.rm = TRUE), "\n")
 cat("speed out of range n =", sum(raw_tbl$flag_speed_out_of_range, na.rm = TRUE), "\n")
 cat("depth both missing n =", sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE), "\n")
 cat("depth only one n =", sum(raw_tbl$flag_depth_only_one, na.rm = TRUE), "\n")
-cat("depth both <= 70 n =", sum(raw_tbl$flag_depth_both_le_70, na.rm = TRUE), "\n")
-cat("depth one<=70 one>70 n =", sum(raw_tbl$flag_depth_one_le_70_one_gt_70, na.rm = TRUE), "\n")
-cat("depth both > 70 n =", sum(raw_tbl$flag_depth_both_gt_70, na.rm = TRUE), "\n")
+cat("depth both <= 150 n =", sum(raw_tbl$flag_depth_both_le_150, na.rm = TRUE), "\n")
+cat("depth one<=150 one>150 n =", sum(raw_tbl$flag_depth_one_le_150_one_gt_150, na.rm = TRUE), "\n")
+cat("depth both > 150 n =", sum(raw_tbl$flag_depth_both_gt_150, na.rm = TRUE), "\n")

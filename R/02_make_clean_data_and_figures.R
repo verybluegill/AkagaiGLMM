@@ -174,8 +174,7 @@ build_glmm_input_tbl <- function(raw_tbl) {
 }
 
 size_levels <- c("medium", "dai", "toku", "tokudai")
-size_labels <- c("Medium", "Large", "Special", "Extra large")
-size_colors <- c("Medium" = "#4E79A7", "Large" = "#59A14F", "Special" = "#E15759", "Extra large" = "#9C755F")
+size_colors <- c("medium" = "#4E79A7", "dai" = "#59A14F", "toku" = "#E15759", "tokudai" = "#9C755F")
 
 size_long_from_cleaned <- function(cleaned_tbl) {
   cleaned_tbl |>
@@ -187,10 +186,7 @@ size_long_from_cleaned <- function(cleaned_tbl) {
     ) |>
     dplyr::mutate(
       size_id = dplyr::recode(.data$size_var, catch_medium = "medium", catch_dai = "dai", catch_toku = "toku", catch_tokudai = "tokudai"),
-      size_label = factor(
-        dplyr::recode(.data$size_id, medium = "Medium", dai = "Large", toku = "Special", tokudai = "Extra large"),
-        levels = size_labels
-      ),
+      size_label = factor(.data$size_id, levels = size_levels),
       cpue = dplyr::if_else(.data$effort_hours > 0, .data$catch / .data$effort_hours, NA_real_)
     ) |>
     dplyr::select("row_id", "year", "area", "effort_hours", "depth_use", "size_id", "size_label", "catch", "cpue")
@@ -259,7 +255,7 @@ plot_annual_cpue_by_size <- function(plot_tbl, output_png) {
 # 深度とサイズ別CPUEの関係を散布図+平滑線で描き、PNGで保存する関数
 plot_depth_cpue_pdf_style <- function(cleaned_long_tbl, output_png) {
   plot_tbl <- cleaned_long_tbl |>
-    dplyr::filter(.data$effort_hours >= 1, !is.na(.data$depth_use), .data$depth_use >= 10, .data$depth_use <= 70, !is.na(.data$cpue)) |>
+    dplyr::filter(.data$effort_hours >= 1, !is.na(.data$depth_use), .data$depth_use >= 10, .data$depth_use <= depth_threshold_m, !is.na(.data$cpue)) |>
     dplyr::group_by(.data$size_label) |>
     dplyr::mutate(
       cpue_q99 = stats::quantile(.data$cpue, probs = 0.99, na.rm = TRUE, names = FALSE),
@@ -356,7 +352,7 @@ build_polygon_geometry <- function() {
     return(NULL)
   }
 
-  area_lonlat_path <- file.path("PrepareDummyData", "DataFromFig", "AreaLonLat.csv")
+  area_lonlat_path <- file.path("ActualData", "AreaLonLat", "AreaLonLat.csv")
   if (!file.exists(area_lonlat_path)) {
     return(NULL)
   }
@@ -385,10 +381,14 @@ plot_area_map_single <- function(plot_tbl, size_label, output_png) {
   map_tbl <- plot_tbl |>
     dplyr::filter(!is.na(.data$year), .data$year %in% 2021:2024)
 
-  fill_limit <- max(abs(map_tbl$diff_log), na.rm = TRUE)
-  if (!is.finite(fill_limit) || fill_limit <= 0) {
-    fill_limit <- 1
+  fill_upper <- suppressWarnings(stats::quantile(map_tbl$ratio_change, probs = 0.95, na.rm = TRUE, names = FALSE))
+  if (!is.finite(fill_upper) || fill_upper < 1) {
+    fill_upper <- max(map_tbl$ratio_change, na.rm = TRUE)
   }
+  if (!is.finite(fill_upper) || fill_upper < 1) {
+    fill_upper <- 1
+  }
+  fill_limits <- c(0, fill_upper)
 
   poly_sf <- build_polygon_geometry()
 
@@ -398,30 +398,30 @@ plot_area_map_single <- function(plot_tbl, size_label, output_png) {
       dplyr::filter(!is.na(.data$year))
 
     p <- ggplot2::ggplot(map_sf) +
-      ggplot2::geom_sf(ggplot2::aes(fill = scales::squish(.data$diff_log, c(-fill_limit, fill_limit))), color = "grey55", linewidth = 0.25) +
+      ggplot2::geom_sf(ggplot2::aes(fill = scales::squish(.data$ratio_change, fill_limits)), color = "grey55", linewidth = 0.25) +
       ggplot2::facet_wrap(~year) +
-      ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0, limits = c(-fill_limit, fill_limit), na.value = "grey90") +
+      ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 1, limits = fill_limits, oob = scales::squish, na.value = "grey90") +
       ggplot2::labs(
-        title = paste("Area CPUE change:", size_label),
-        subtitle = "Log change from the previous year",
-        fill = "Log change"
+        title = paste("Area CPUE ratio change:", size_label),
+        subtitle = "Ratio relative to the previous year",
+        fill = "Ratio"
       ) +
       ggplot2::theme_bw()
   } else {
     tile_tbl <- make_tile_layout(sort(unique(map_tbl$area))) |>
       dplyr::left_join(map_tbl, by = "area")
 
-    p <- ggplot2::ggplot(tile_tbl, ggplot2::aes(x = .data$x, y = .data$y, fill = scales::squish(.data$diff_log, c(-fill_limit, fill_limit)))) +
+    p <- ggplot2::ggplot(tile_tbl, ggplot2::aes(x = .data$x, y = .data$y, fill = scales::squish(.data$ratio_change, fill_limits))) +
       ggplot2::geom_tile(color = "grey55", linewidth = 0.35) +
       ggplot2::geom_text(ggplot2::aes(label = .data$area), size = 3) +
       ggplot2::facet_wrap(~year) +
-      ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 0, limits = c(-fill_limit, fill_limit), na.value = "grey90") +
+      ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 1, limits = fill_limits, oob = scales::squish, na.value = "grey90") +
       ggplot2::labs(
-        title = paste("Area CPUE change:", size_label),
-        subtitle = "Log change from the previous year",
+        title = paste("Area CPUE ratio change:", size_label),
+        subtitle = "Ratio relative to the previous year",
         x = NULL,
         y = NULL,
-        fill = "Log change"
+        fill = "Ratio"
       ) +
       ggplot2::theme_bw() +
       ggplot2::theme(axis.text = ggplot2::element_blank(), axis.ticks = ggplot2::element_blank())
@@ -521,7 +521,7 @@ area_cpue_tbl <- cleaned_long_tbl |>
   dplyr::group_by(.data$size_id, .data$area) |>
   dplyr::mutate(
     cpue_prev = dplyr::lag(.data$cpue_ratio),
-    diff_log = log1p(.data$cpue_ratio) - log1p(.data$cpue_prev)
+    ratio_change = dplyr::if_else(is.na(.data$cpue_prev) | .data$cpue_prev == 0, NA_real_, .data$cpue_ratio / .data$cpue_prev)
   ) |>
   dplyr::ungroup()
 
@@ -586,21 +586,21 @@ save_check_csv(glmm_input_tbl, glmm_input_output_path)
 plot_annual_cpue_total(annual_total_tbl, file.path("output", "check_figures", "annual_cpue_total.png"))
 plot_annual_cpue_by_size(annual_by_size_tbl, file.path("output", "check_figures", "annual_cpue_by_size.png"))
 plot_depth_cpue_pdf_style(cleaned_long_tbl, file.path("output", "check_figures", "depth_cpue_pdf_style.png"))
-plot_area_map_single(area_cpue_medium_tbl, "Medium", file.path("output", "check_figures", "area_cpue_map_medium.png"))
-plot_area_map_single(area_cpue_dai_tbl, "Large", file.path("output", "check_figures", "area_cpue_map_dai.png"))
-plot_area_map_single(area_cpue_toku_tbl, "Special", file.path("output", "check_figures", "area_cpue_map_toku.png"))
-plot_area_map_single(area_cpue_tokudai_tbl, "Extra large", file.path("output", "check_figures", "area_cpue_map_tokudai.png"))
+plot_area_map_single(area_cpue_medium_tbl, "medium", file.path("output", "check_figures", "area_cpue_map_medium.png"))
+plot_area_map_single(area_cpue_dai_tbl, "dai", file.path("output", "check_figures", "area_cpue_map_dai.png"))
+plot_area_map_single(area_cpue_toku_tbl, "toku", file.path("output", "check_figures", "area_cpue_map_toku.png"))
+plot_area_map_single(area_cpue_tokudai_tbl, "tokudai", file.path("output", "check_figures", "area_cpue_map_tokudai.png"))
 
 cat("cleaned rows =", nrow(cleaned_tbl), "\n")
-cat("depth both > 70 n =", sum(!is.na(raw_tbl$depth_raw_1) & !is.na(raw_tbl$depth_raw_2) & raw_tbl$depth_raw_1 > 70 & raw_tbl$depth_raw_2 > 70, na.rm = TRUE), "\n")
-cat("depth one<=70 one>70 n =", sum(!is.na(raw_tbl$depth_raw_1) & !is.na(raw_tbl$depth_raw_2) & ((raw_tbl$depth_raw_1 <= 70 & raw_tbl$depth_raw_2 > 70) | (raw_tbl$depth_raw_1 > 70 & raw_tbl$depth_raw_2 <= 70)), na.rm = TRUE), "\n")
+cat("depth both > 150 n =", sum(!is.na(raw_tbl$depth_raw_1) & !is.na(raw_tbl$depth_raw_2) & raw_tbl$depth_raw_1 > depth_threshold_m & raw_tbl$depth_raw_2 > depth_threshold_m, na.rm = TRUE), "\n")
+cat("depth one<=150 one>150 n =", sum(!is.na(raw_tbl$depth_raw_1) & !is.na(raw_tbl$depth_raw_2) & ((raw_tbl$depth_raw_1 <= depth_threshold_m & raw_tbl$depth_raw_2 > depth_threshold_m) | (raw_tbl$depth_raw_1 > depth_threshold_m & raw_tbl$depth_raw_2 <= depth_threshold_m)), na.rm = TRUE), "\n")
 cat("cleaned rows with depth_use non-missing =", sum(!is.na(cleaned_tbl$depth_use)), "\n")
 cat("annual CPUE summary =\n")
 print(annual_total_tbl)
-cat("area map size = Medium | nrow =", nrow(area_cpue_medium_tbl), "\n")
-cat("area map size = Large | nrow =", nrow(area_cpue_dai_tbl), "\n")
-cat("area map size = Special | nrow =", nrow(area_cpue_toku_tbl), "\n")
-cat("area map size = Extra large | nrow =", nrow(area_cpue_tokudai_tbl), "\n")
+cat("area map size = medium | nrow =", nrow(area_cpue_medium_tbl), "\n")
+cat("area map size = dai | nrow =", nrow(area_cpue_dai_tbl), "\n")
+cat("area map size = toku | nrow =", nrow(area_cpue_toku_tbl), "\n")
+cat("area map size = tokudai | nrow =", nrow(area_cpue_tokudai_tbl), "\n")
 cat("glmm input rows =", nrow(glmm_input_tbl), "\n")
 cat("flag_use_for_main_glmm rows =", sum(glmm_input_tbl$flag_use_for_main_glmm, na.rm = TRUE), "\n")
 cat("depth_glmm missing rows =", sum(is.na(glmm_input_tbl$depth_glmm)), "\n")
