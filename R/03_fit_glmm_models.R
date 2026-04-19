@@ -9,7 +9,7 @@ source(file.path("R", "00_load_packages.R"))
 
 optional_pkgs <- load_project_packages(
   required_pkgs = c("dplyr", "ggplot2", "glmmTMB", "readr", "tibble", "tidyr", "purrr"),
-  optional_pkgs = c("DHARMa")
+  optional_pkgs = c("DHARMa", "patchwork")
 )
 
 ensure_project_dirs()
@@ -741,8 +741,8 @@ plot_year_index <- function(index_tbl, output_path, title_text, show_ci = FALSE)
 }
 
 # 標準化指数と raw CPUE の比較図を保存する。
-plot_overlay <- function(overlay_tbl, output_path, title_text) {
-  p <- ggplot2::ggplot(
+plot_overlay_object <- function(overlay_tbl, title_text) {
+  ggplot2::ggplot(
     overlay_tbl,
     ggplot2::aes(
       x = .data$year,
@@ -771,6 +771,13 @@ plot_overlay <- function(overlay_tbl, output_path, title_text) {
     ) +
     ggplot2::scale_x_continuous(breaks = sort(unique(overlay_tbl$year))) +
     ggplot2::theme_bw()
+}
+
+plot_overlay <- function(overlay_tbl, output_path, title_text) {
+  p <- plot_overlay_object(
+    overlay_tbl = overlay_tbl,
+    title_text = title_text
+  )
 
   ggplot2::ggsave(
     filename = output_path,
@@ -778,6 +785,118 @@ plot_overlay <- function(overlay_tbl, output_path, title_text) {
     width = 10,
     height = 6,
     dpi = 150
+  )
+}
+
+get_overlay_response_tbl <- function(workflow_results, response_name) {
+  overlay_tbl <- workflow_results[[response_name]]$overlay_tbl %||% NULL
+
+  if (is.null(overlay_tbl) || nrow(overlay_tbl) == 0) {
+    return(NULL)
+  }
+
+  if (!("response" %in% names(overlay_tbl))) {
+    overlay_tbl <- overlay_tbl |>
+      dplyr::mutate(response = response_name)
+  }
+
+  overlay_tbl
+}
+
+plot_overlay_combined_2x2 <- function(overlay_tbl_list, output_path) {
+  if (!isTRUE(optional_pkgs[["patchwork"]])) {
+    cat("combined overlay 2x2 skipped = patchwork is not available\n")
+    return(FALSE)
+  }
+
+  valid_names <- names(overlay_tbl_list)[vapply(overlay_tbl_list, function(x) !is.null(x) && nrow(x) > 0, logical(1))]
+
+  if (length(valid_names) == 0) {
+    cat("combined overlay 2x2 skipped = no overlay table available\n")
+    return(FALSE)
+  }
+
+  plot_list <- lapply(
+    valid_names,
+    function(response_name) {
+      plot_overlay_object(
+        overlay_tbl = overlay_tbl_list[[response_name]],
+        title_text = response_name
+      )
+    }
+  )
+  names(plot_list) <- valid_names
+
+  combined_plot <- patchwork::wrap_plots(plot_list, ncol = 2) +
+    patchwork::plot_annotation(title = "Overlay of raw relative CPUE and standardized index")
+
+  tryCatch(
+    {
+      ggplot2::ggsave(
+        filename = output_path,
+        plot = combined_plot,
+        width = 14,
+        height = 10,
+        dpi = 150
+      )
+      TRUE
+    },
+    error = function(e) {
+      cat("combined overlay 2x2 skipped =", conditionMessage(e), "\n")
+      FALSE
+    }
+  )
+}
+
+plot_overlay_combined_single_panel <- function(overlay_tbl_all, output_path) {
+  if (is.null(overlay_tbl_all) || nrow(overlay_tbl_all) == 0) {
+    cat("combined overlay single panel skipped = no overlay table available\n")
+    return(FALSE)
+  }
+
+  p <- ggplot2::ggplot(
+    overlay_tbl_all,
+    ggplot2::aes(
+      x = .data$year,
+      y = .data$value,
+      color = .data$response,
+      linetype = .data$series,
+      group = interaction(.data$response, .data$series)
+    )
+  ) +
+    ggplot2::geom_hline(yintercept = 1, linetype = "dashed", color = "grey40") +
+    ggplot2::geom_line() +
+    ggplot2::geom_point(size = 2) +
+    ggplot2::geom_errorbar(
+      data = dplyr::filter(overlay_tbl_all, .data$series == "Standardized index"),
+      ggplot2::aes(ymin = .data$lower.CL, ymax = .data$upper.CL),
+      width = 0.15
+    ) +
+    ggplot2::labs(
+      title = "Overlay of raw relative CPUE and standardized index",
+      x = "Year",
+      y = "Relative value",
+      color = "Response",
+      linetype = "Series"
+    ) +
+    ggplot2::scale_x_continuous(breaks = sort(unique(overlay_tbl_all$year))) +
+    ggplot2::theme_bw()
+
+  tryCatch(
+    {
+      ggplot2::ggsave(
+        filename = output_path,
+        plot = p,
+        width = 11,
+        height = 7,
+        dpi = 150
+      )
+      TRUE
+    },
+    error = function(e) {
+      cat("combined overlay single panel skipped =", conditionMessage(e), "\n")
+      FALSE
+    }
   )
 }
 
@@ -1066,7 +1185,8 @@ for (response_name in response_levels) {
         final_tbl = final_tbl,
         compare_results_tbl = compare_results_tbl,
         best_model_table_row = best_model_table_row,
-        best_model_summary_row = best_model_summary_row
+        best_model_summary_row = best_model_summary_row,
+        overlay_tbl = overlay_tbl
       )
     },
     error = function(e) {
@@ -1120,7 +1240,8 @@ for (response_name in response_levels) {
         final_tbl = NULL,
         compare_results_tbl = failed_compare_tbl,
         best_model_table_row = failed_best_tbl,
-        best_model_summary_row = NULL
+        best_model_summary_row = NULL,
+        overlay_tbl = NULL
       )
     }
   )
@@ -1131,6 +1252,28 @@ for (response_name in response_levels) {
 readr::write_csv(all_compare_results_tbl, path_aic_compare_all)
 readr::write_csv(best_model_table_tbl, path_best_model_table)
 readr::write_csv(best_model_summary_tbl, path_best_model_summary)
+target_responses <- c("chu", "dai", "toku", "tokudai")
+overlay_tbl_list <- lapply(target_responses, function(x) get_overlay_response_tbl(workflow_results, x))
+names(overlay_tbl_list) <- target_responses
+overlay_tbl_all <- dplyr::bind_rows(overlay_tbl_list[!vapply(overlay_tbl_list, is.null, logical(1))])
+combined_overlay_available <- names(overlay_tbl_list)[!vapply(overlay_tbl_list, is.null, logical(1))]
+combined_overlay_2x2_path <- file.path("output", "figures", "overlay_best_combined_2x2.png")
+combined_overlay_single_panel_path <- file.path("output", "figures", "overlay_best_combined_single_panel.png")
+combined_overlay_2x2_saved <- plot_overlay_combined_2x2(overlay_tbl_list, combined_overlay_2x2_path)
+combined_overlay_single_panel_saved <- plot_overlay_combined_single_panel(overlay_tbl_all, combined_overlay_single_panel_path)
+
+cat("combined overlay available responses =", paste(combined_overlay_available, collapse = ", "), "\n")
+cat("combined overlay 2x2 saved =", combined_overlay_2x2_saved, "\n")
+cat("combined overlay single panel saved =", combined_overlay_single_panel_saved, "\n")
+
+if (isTRUE(combined_overlay_2x2_saved)) {
+  cat("saved combined overlay path =", combined_overlay_2x2_path, "\n")
+}
+
+if (isTRUE(combined_overlay_single_panel_saved)) {
+  cat("saved combined overlay path =", combined_overlay_single_panel_path, "\n")
+}
+
 saveRDS(
   list(
     depth_boundary_info = depth_boundary_info,
