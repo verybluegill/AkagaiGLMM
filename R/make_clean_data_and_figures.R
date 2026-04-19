@@ -10,10 +10,14 @@ load_project_packages(
   optional_pkgs = c("sf")
 )
 
+ensure_project_dirs()
+
 dir.create(file.path("output", "check_tables"), showWarnings = FALSE, recursive = TRUE)
 dir.create(file.path("output", "check_figures"), showWarnings = FALSE, recursive = TRUE)
 
 check_data_path <- file.path("output", "check_tables", "raw_data_check.csv")
+cleaned_data_output_path <- file.path("data_processed", "akagai_cleaned_data.csv")
+glmm_input_output_path <- file.path("data_processed", "akagai_glmm_input.csv")
 
 save_check_csv <- function(data, path) {
   readr::write_csv(data, path, na = "")
@@ -30,6 +34,83 @@ make_depth_use <- function(depth_raw_1, depth_raw_2) {
     !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > 50 & depth_raw_2 > 50 ~ NA_real_,
     TRUE ~ NA_real_
   )
+}
+
+build_glmm_input_tbl <- function(raw_tbl) {
+  glmm_input <- raw_tbl |>
+    dplyr::mutate(
+      date = as.Date(.data$ymd_reiwa),
+      year = suppressWarnings(as.integer(.data$year)),
+      month = suppressWarnings(as.integer(.data$month)),
+      area = as.character(.data$area),
+      vessel = as.character(.data$vessel),
+      catch_total = suppressWarnings(as.numeric(.data$catch_total)),
+      catch_medium = suppressWarnings(as.numeric(.data$catch_medium)),
+      catch_dai = suppressWarnings(as.numeric(.data$catch_dai)),
+      catch_toku = suppressWarnings(as.numeric(.data$catch_toku)),
+      catch_tokudai = suppressWarnings(as.numeric(.data$catch_tokudai)),
+      chu = catch_medium,
+      dai = catch_dai,
+      toku = catch_toku,
+      tokudai = catch_tokudai,
+      ware = 0,
+      sho = 0,
+      shosho = 0,
+      chu = dplyr::coalesce(.data$chu, 0),
+      dai = dplyr::coalesce(.data$dai, 0),
+      toku = dplyr::coalesce(.data$toku, 0),
+      tokudai = dplyr::coalesce(.data$tokudai, 0),
+      count_total = dplyr::if_else(
+        !is.na(.data$catch_total),
+        .data$catch_total,
+        .data$chu + .data$dai + .data$toku + .data$tokudai + .data$ware + .data$sho + .data$shosho
+      ),
+      depth_raw = suppressWarnings(as.numeric(.data$depth_use_raw_rule)),
+      depth_min_raw = suppressWarnings(as.numeric(.data$depth_raw_1)),
+      depth_max_raw = suppressWarnings(as.numeric(.data$depth_raw_2)),
+      depth_flag_base = make_depth_use(.data$depth_raw_1, .data$depth_raw_2),
+      depth_cleaning_raw = depth_flag_base,
+      flag_depth_missing = is.na(.data$depth_raw_1) & is.na(.data$depth_raw_2),
+      flag_depth_out_of_range = !flag_depth_missing & is.na(depth_flag_base),
+      flag_depth_bad = flag_depth_missing | flag_depth_out_of_range,
+      depth_glmm = dplyr::if_else(flag_depth_bad, NA_real_, as.numeric(depth_flag_base)),
+      duration_min_raw = suppressWarnings(as.numeric(.data$effort_hours)) * 60,
+      flag_duration_missing = is.na(duration_min_raw),
+      flag_duration_out_of_range = !is.na(duration_min_raw) & (duration_min_raw < 1 | duration_min_raw > 300),
+      flag_duration_bad = flag_duration_missing | flag_duration_out_of_range,
+      duration_min_glmm = dplyr::if_else(flag_duration_bad, NA_real_, duration_min_raw),
+      effort_raw = duration_min_raw,
+      effort = duration_min_raw,
+      effort_glmm = duration_min_glmm,
+      flag_area_missing = is.na(.data$area) | .data$area == "",
+      flag_non_integer_count = dplyr::if_else(
+        is.na(.data$count_total),
+        TRUE,
+        abs(.data$count_total - round(.data$count_total)) > 1e-8 |
+          abs(.data$chu - round(.data$chu)) > 1e-8 |
+          abs(.data$dai - round(.data$dai)) > 1e-8 |
+          abs(.data$toku - round(.data$toku)) > 1e-8 |
+          abs(.data$tokudai - round(.data$tokudai)) > 1e-8
+      ),
+      flag_year_out_of_range = is.na(.data$year) | !(.data$year %in% 2020:2024),
+      flag_effort_glmm_bad = is.na(.data$effort_glmm) | !is.finite(.data$effort_glmm) | .data$effort_glmm <= 0,
+      flag_use_for_main_glmm = !flag_non_integer_count &
+        !flag_year_out_of_range &
+        !flag_area_missing &
+        !flag_effort_glmm_bad
+    ) |>
+    dplyr::select(
+      "date", "year", "month", "area", "vessel", "effort", "count_total",
+      "tokudai", "toku", "dai", "chu", "sho", "shosho",
+      "row_id", "depth_raw", "depth_min_raw", "depth_max_raw", "depth_flag_base", "depth_cleaning_raw", "depth_glmm",
+      "duration_min_raw", "duration_min_glmm", "effort_raw", "effort_glmm",
+      "flag_depth_missing", "flag_depth_out_of_range", "flag_depth_bad",
+      "flag_duration_missing", "flag_duration_out_of_range", "flag_duration_bad",
+      "flag_area_missing", "flag_non_integer_count", "flag_year_out_of_range", "flag_effort_glmm_bad", "flag_use_for_main_glmm",
+      "ware"
+    )
+
+  glmm_input
 }
 
 size_levels <- c("medium", "dai", "toku", "tokudai")
@@ -282,6 +363,7 @@ plot_area_map_single <- function(plot_tbl, size_label, output_png) {
 }
 
 raw_tbl <- readr::read_csv(check_data_path, show_col_types = FALSE)
+glmm_input_tbl <- build_glmm_input_tbl(raw_tbl)
 
 cleaned_tbl <- raw_tbl |>
   dplyr::mutate(
@@ -360,6 +442,41 @@ area_cpue_toku_tbl <- area_cpue_tbl |>
 area_cpue_tokudai_tbl <- area_cpue_tbl |>
   dplyr::filter(.data$size_id == "tokudai")
 
+depth_glmm_na_rows <- glmm_input_tbl |>
+  dplyr::filter(.data$flag_depth_bad) |>
+  dplyr::select(dplyr::any_of(c(
+    "row_id", "date", "year", "month", "vessel", "area",
+    "depth_raw", "depth_min_raw", "depth_max_raw", "depth_flag_base", "depth_glmm",
+    "flag_depth_missing", "flag_depth_out_of_range", "count_total"
+  )))
+
+main_glmm_dropped_rows <- glmm_input_tbl |>
+  dplyr::filter(!.data$flag_use_for_main_glmm) |>
+  dplyr::select(dplyr::any_of(c(
+    "row_id", "date", "year", "month", "vessel", "area", "count_total",
+    "duration_min_raw", "duration_min_glmm", "effort_raw", "effort_glmm",
+    "flag_year_out_of_range", "flag_area_missing", "flag_effort_glmm_bad", "flag_non_integer_count"
+  )))
+
+glmm_input_summary <- tibble::tibble(
+  metric = c(
+    "rows_total",
+    "rows_flag_use_for_main_glmm",
+    "rows_depth_glmm_non_missing",
+    "rows_depth_glmm_missing",
+    "count_total_sum",
+    "effort_glmm_sum"
+  ),
+  value = c(
+    nrow(glmm_input_tbl),
+    sum(glmm_input_tbl$flag_use_for_main_glmm, na.rm = TRUE),
+    sum(!is.na(glmm_input_tbl$depth_glmm)),
+    sum(is.na(glmm_input_tbl$depth_glmm)),
+    sum(glmm_input_tbl$count_total, na.rm = TRUE),
+    sum(glmm_input_tbl$effort_glmm, na.rm = TRUE)
+  )
+)
+
 save_check_csv(cleaned_tbl, file.path("output", "check_tables", "cleaned_data.csv"))
 save_check_csv(cleaned_summary, file.path("output", "check_tables", "cleaned_data_summary.csv"))
 save_check_csv(annual_total_tbl, file.path("output", "check_tables", "year_count_effort_cpue_total.csv"))
@@ -368,6 +485,11 @@ save_check_csv(area_cpue_medium_tbl, file.path("output", "check_tables", "area_c
 save_check_csv(area_cpue_dai_tbl, file.path("output", "check_tables", "area_cpue_dai_tbl.csv"))
 save_check_csv(area_cpue_toku_tbl, file.path("output", "check_tables", "area_cpue_toku_tbl.csv"))
 save_check_csv(area_cpue_tokudai_tbl, file.path("output", "check_tables", "area_cpue_tokudai_tbl.csv"))
+save_check_csv(glmm_input_summary, file.path("output", "check_tables", "glmm_input_summary.csv"))
+save_check_csv(depth_glmm_na_rows, file.path("output", "check_tables", "check_depth_glmm_na_rows.csv"))
+save_check_csv(main_glmm_dropped_rows, file.path("output", "check_tables", "check_main_glmm_dropped_rows.csv"))
+save_check_csv(cleaned_tbl, cleaned_data_output_path)
+save_check_csv(glmm_input_tbl, glmm_input_output_path)
 
 plot_annual_cpue_total(annual_total_tbl, file.path("output", "check_figures", "annual_cpue_total.png"))
 plot_annual_cpue_by_size(annual_by_size_tbl, file.path("output", "check_figures", "annual_cpue_by_size.png"))
@@ -385,6 +507,11 @@ cat("area map size = Medium | nrow =", nrow(area_cpue_medium_tbl), "\n")
 cat("area map size = Large | nrow =", nrow(area_cpue_dai_tbl), "\n")
 cat("area map size = Special | nrow =", nrow(area_cpue_toku_tbl), "\n")
 cat("area map size = Extra large | nrow =", nrow(area_cpue_tokudai_tbl), "\n")
+cat("glmm input rows =", nrow(glmm_input_tbl), "\n")
+cat("flag_use_for_main_glmm rows =", sum(glmm_input_tbl$flag_use_for_main_glmm, na.rm = TRUE), "\n")
+cat("depth_glmm missing rows =", sum(is.na(glmm_input_tbl$depth_glmm)), "\n")
+cat("saved cleaned data =", cleaned_data_output_path, "\n")
+cat("saved glmm input =", glmm_input_output_path, "\n")
 identical_medium_dai <- identical(area_cpue_medium_tbl, area_cpue_dai_tbl)
 cat("identical(area_cpue_medium_tbl, area_cpue_dai_tbl) =", identical_medium_dai, "\n")
 if (identical_medium_dai) warning("area_cpue_medium_tbl and area_cpue_dai_tbl are identical")
