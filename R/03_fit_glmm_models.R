@@ -992,10 +992,8 @@ for (response_name in response_levels) {
       compare_tbl <- make_compare_dataset(glmm_input, response_name, depth_boundary_info)
       compare_dataset_rows <- nrow(compare_tbl)
       compare_results_tbl <- tibble::tibble()
-      compare_fit_list <- list()
 
       cat("response =", response_name, "| compare dataset rows =", compare_dataset_rows, "\n")
-      cat("response =", response_name, "| depth category boundary =", depth_boundary_info$c1, ",", depth_boundary_info$c2, "\n")
 
       for (spec_i in candidate_model_specs) {
         fit_out_i <- safe_fit_glmmTMB(
@@ -1004,7 +1002,6 @@ for (response_name in response_levels) {
           data_obj = compare_tbl
         )
 
-        compare_fit_list[[spec_i$model_id]] <- fit_out_i
         compare_results_tbl <- dplyr::bind_rows(
           compare_results_tbl,
           extract_model_metrics(response_name, spec_i, fit_out_i)
@@ -1030,12 +1027,6 @@ for (response_name in response_levels) {
 
       compare_csv_path <- file.path("output", "tables", paste0("aic_compare_", response_name, ".csv"))
       readr::write_csv(compare_results_tbl, compare_csv_path)
-
-      cat(
-        "response =", response_name, "| fitted candidate model ids =",
-        paste(compare_results_tbl$model_id, collapse = ", "),
-        "\n"
-      )
 
       best_model_row <- select_best_model(compare_results_tbl)
 
