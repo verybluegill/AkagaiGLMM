@@ -67,9 +67,9 @@ make_depth_use <- function(depth_raw_1, depth_raw_2) {
     is.na(depth_raw_1) & is.na(depth_raw_2) ~ NA_real_,
     !is.na(depth_raw_1) & is.na(depth_raw_2) ~ depth_raw_1,
     is.na(depth_raw_1) & !is.na(depth_raw_2) ~ depth_raw_2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 <= 50 & depth_raw_2 <= 50 ~ (depth_raw_1 + depth_raw_2) / 2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & ((depth_raw_1 <= 50 & depth_raw_2 > 50) | (depth_raw_1 > 50 & depth_raw_2 <= 50)) ~ pmin(depth_raw_1, depth_raw_2),
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > 50 & depth_raw_2 > 50 ~ NA_real_,
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 <= 70 & depth_raw_2 <= 70 ~ (depth_raw_1 + depth_raw_2) / 2,
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & ((depth_raw_1 <= 70 & depth_raw_2 > 70) | (depth_raw_1 > 70 & depth_raw_2 <= 70)) ~ pmin(depth_raw_1, depth_raw_2),
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > 70 & depth_raw_2 > 70 ~ NA_real_,
     TRUE ~ NA_real_
   )
 }
@@ -201,9 +201,9 @@ raw_tbl <- tibble::as_tibble(raw_dat) |>
     flag_depth_both_missing = is.na(.data$depth_raw_1) & is.na(.data$depth_raw_2),
     flag_depth_only_one = xor(is.na(.data$depth_raw_1), is.na(.data$depth_raw_2)),
     flag_depth_both_present = !is.na(.data$depth_raw_1) & !is.na(.data$depth_raw_2),
-    flag_depth_both_le_50 = .data$flag_depth_both_present & .data$depth_raw_1 <= 50 & .data$depth_raw_2 <= 50,
-    flag_depth_one_le_50_one_gt_50 = .data$flag_depth_both_present & ((.data$depth_raw_1 <= 50 & .data$depth_raw_2 > 50) | (.data$depth_raw_1 > 50 & .data$depth_raw_2 <= 50)),
-    flag_depth_both_gt_50 = .data$flag_depth_both_present & .data$depth_raw_1 > 50 & .data$depth_raw_2 > 50,
+    flag_depth_both_le_50 = .data$flag_depth_both_present & .data$depth_raw_1 <= 70 & .data$depth_raw_2 <= 70,
+    flag_depth_one_le_50_one_gt_50 = .data$flag_depth_both_present & ((.data$depth_raw_1 <= 70 & .data$depth_raw_2 > 70) | (.data$depth_raw_1 > 70 & .data$depth_raw_2 <= 70)),
+    flag_depth_both_gt_50 = .data$flag_depth_both_present & .data$depth_raw_1 > 70 & .data$depth_raw_2 > 70,
     depth_use_raw_rule = make_depth_use(.data$depth_raw_1, .data$depth_raw_2),
     catch_total = suppressWarnings(as.numeric(.data[[catch_total_col]])),
     catch_medium = suppressWarnings(as.numeric(.data[[catch_medium_col]])),
@@ -320,9 +320,9 @@ depth_rule_check_summary <- tibble::tibble(
     "depth_both_missing_n",
     "depth_only_one_n",
     "depth_both_present_n",
-    "depth_both_le_50_n",
-    "depth_one_le_50_one_gt_50_n",
-    "depth_both_gt_50_n",
+    "depth_both_le_70_n",
+    "depth_one_le_70_one_gt_70_n",
+    "depth_both_gt_70_n",
     "depth_use_raw_rule_missing_n"
   ),
   value = c(
@@ -351,15 +351,15 @@ data_cleaning_candidates <- tibble::tibble(
     "Keep out-of-scope years as NA with flag",
     "Use effort_hours only",
     "Use depth_use final rule only",
-    "Review rows with both depth > 50 m",
-    "Review rows with one depth <= 50 and one > 50",
+    "Review rows with both depth > 70 m",
+    "Review rows with one depth <= 70 and one > 70",
     "Review extreme CPUE candidates"
   ),
   reason = c(
     "Period outside 2020 to 2024 should be retained for checking",
     "A single effort variable simplifies later CPUE and offset handling",
     "A single depth variable simplifies later model comparison",
-    "Both depths over 50 m are outside the intended shallow range",
+    "Both depths over 70 m are outside the intended shallow range",
     "Mixed shallow and deep values need explicit review but can still use the smaller depth",
     "Large CPUE values may reflect short effort or data entry issues"
   )
@@ -400,8 +400,8 @@ save_check_csv(depth_rule_check_summary, file.path("output", "check_tables", "de
 save_check_csv(effort_check_summary, file.path("output", "check_tables", "effort_check_summary.csv"))
 save_check_csv(data_cleaning_candidates, file.path("output", "check_tables", "data_cleaning_candidates.csv"))
 save_check_csv(model_structure_candidates, file.path("output", "check_tables", "model_structure_candidates.csv"))
-save_check_csv(depth_both_gt50_rows, file.path("output", "check_tables", "depth_both_gt50_rows.csv"))
-save_check_csv(depth_one_le50_one_gt50_rows, file.path("output", "check_tables", "depth_one_le50_one_gt50_rows.csv"))
+save_check_csv(depth_both_gt50_rows, file.path("output", "check_tables", "depth_both_gt70_rows.csv"))
+save_check_csv(depth_one_le50_one_gt50_rows, file.path("output", "check_tables", "depth_one_le70_one_gt70_rows.csv"))
 save_check_csv(extreme_cpue_candidate_rows, file.path("output", "check_tables", "extreme_cpue_candidate_rows.csv"))
 
 make_date_year_check_plot(raw_tbl, file.path("output", "check_figures", "date_year_check.png"))
@@ -421,6 +421,6 @@ cat("effort missing n =", sum(raw_tbl$flag_effort_missing, na.rm = TRUE), "\n")
 cat("effort nonpositive n =", sum(raw_tbl$flag_effort_nonpositive, na.rm = TRUE), "\n")
 cat("depth both missing n =", sum(raw_tbl$flag_depth_both_missing, na.rm = TRUE), "\n")
 cat("depth only one n =", sum(raw_tbl$flag_depth_only_one, na.rm = TRUE), "\n")
-cat("depth both <= 50 n =", sum(raw_tbl$flag_depth_both_le_50, na.rm = TRUE), "\n")
-cat("depth one<=50 one>50 n =", sum(raw_tbl$flag_depth_one_le_50_one_gt_50, na.rm = TRUE), "\n")
-cat("depth both > 50 n =", sum(raw_tbl$flag_depth_both_gt_50, na.rm = TRUE), "\n")
+cat("depth both <= 70 n =", sum(raw_tbl$flag_depth_both_le_50, na.rm = TRUE), "\n")
+cat("depth one<=70 one>70 n =", sum(raw_tbl$flag_depth_one_le_50_one_gt_50, na.rm = TRUE), "\n")
+cat("depth both > 70 n =", sum(raw_tbl$flag_depth_both_gt_50, na.rm = TRUE), "\n")

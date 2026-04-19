@@ -37,9 +37,9 @@ make_depth_use <- function(depth_raw_1, depth_raw_2) {
     is.na(depth_raw_1) & is.na(depth_raw_2) ~ NA_real_,
     !is.na(depth_raw_1) & is.na(depth_raw_2) ~ depth_raw_1,
     is.na(depth_raw_1) & !is.na(depth_raw_2) ~ depth_raw_2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 <= 50 & depth_raw_2 <= 50 ~ (depth_raw_1 + depth_raw_2) / 2,
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & ((depth_raw_1 <= 50 & depth_raw_2 > 50) | (depth_raw_1 > 50 & depth_raw_2 <= 50)) ~ pmin(depth_raw_1, depth_raw_2),
-    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > 50 & depth_raw_2 > 50 ~ NA_real_,
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 <= 70 & depth_raw_2 <= 70 ~ (depth_raw_1 + depth_raw_2) / 2,
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & ((depth_raw_1 <= 70 & depth_raw_2 > 70) | (depth_raw_1 > 70 & depth_raw_2 <= 70)) ~ pmin(depth_raw_1, depth_raw_2),
+    !is.na(depth_raw_1) & !is.na(depth_raw_2) & depth_raw_1 > 70 & depth_raw_2 > 70 ~ NA_real_,
     TRUE ~ NA_real_
   )
 }
@@ -274,7 +274,7 @@ plot_annual_cpue_by_size <- function(plot_tbl, output_png) {
 
 plot_depth_cpue_pdf_style <- function(cleaned_long_tbl, output_png) {
   plot_tbl <- cleaned_long_tbl |>
-    dplyr::filter(.data$effort_hours >= 1, !is.na(.data$depth_use), .data$depth_use >= 10, .data$depth_use <= 50, !is.na(.data$cpue)) |>
+    dplyr::filter(.data$effort_hours >= 1, !is.na(.data$depth_use), .data$depth_use >= 10, .data$depth_use <= 70, !is.na(.data$cpue)) |>
     dplyr::group_by(.data$size_label) |>
     dplyr::mutate(
       cpue_q99 = stats::quantile(.data$cpue, probs = 0.99, na.rm = TRUE, names = FALSE),
@@ -601,6 +601,8 @@ plot_area_map_single(area_cpue_toku_tbl, "Special", file.path("output", "check_f
 plot_area_map_single(area_cpue_tokudai_tbl, "Extra large", file.path("output", "check_figures", "area_cpue_map_tokudai.png"))
 
 cat("cleaned rows =", nrow(cleaned_tbl), "\n")
+cat("depth both > 70 n =", sum(!is.na(raw_tbl$depth_raw_1) & !is.na(raw_tbl$depth_raw_2) & raw_tbl$depth_raw_1 > 70 & raw_tbl$depth_raw_2 > 70, na.rm = TRUE), "\n")
+cat("depth one<=70 one>70 n =", sum(!is.na(raw_tbl$depth_raw_1) & !is.na(raw_tbl$depth_raw_2) & ((raw_tbl$depth_raw_1 <= 70 & raw_tbl$depth_raw_2 > 70) | (raw_tbl$depth_raw_1 > 70 & raw_tbl$depth_raw_2 <= 70)), na.rm = TRUE), "\n")
 cat("cleaned rows with depth_use non-missing =", sum(!is.na(cleaned_tbl$depth_use)), "\n")
 cat("annual CPUE summary =\n")
 print(annual_total_tbl)
