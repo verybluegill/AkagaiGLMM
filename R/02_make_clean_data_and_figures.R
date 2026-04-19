@@ -352,7 +352,7 @@ build_polygon_geometry <- function() {
     return(NULL)
   }
 
-  area_lonlat_path <- file.path("ActualData", "AreaLonLat", "AreaLonLat.csv")
+  area_lonlat_path <- file.path("ActualData", "AreaLonLat.csv")
   if (!file.exists(area_lonlat_path)) {
     return(NULL)
   }
@@ -379,14 +379,15 @@ build_polygon_geometry <- function() {
 #ある1サイズについて、area別CPUE前年差の図を描く関数
 plot_area_map_single <- function(plot_tbl, size_label, output_png) {
   map_tbl <- plot_tbl |>
-    dplyr::filter(!is.na(.data$year), .data$year %in% 2021:2024)
+    dplyr::filter(!is.na(.data$year), .data$year %in% 2021:2024) |>
+    dplyr::mutate(ratio_percent = .data$ratio_change * 100)
 
-  fill_upper <- suppressWarnings(stats::quantile(map_tbl$ratio_change, probs = 0.95, na.rm = TRUE, names = FALSE))
-  if (!is.finite(fill_upper) || fill_upper < 1) {
-    fill_upper <- max(map_tbl$ratio_change, na.rm = TRUE)
+  fill_upper <- suppressWarnings(stats::quantile(map_tbl$ratio_percent, probs = 0.95, na.rm = TRUE, names = FALSE))
+  if (!is.finite(fill_upper) || fill_upper < 100) {
+    fill_upper <- max(map_tbl$ratio_percent, na.rm = TRUE)
   }
-  if (!is.finite(fill_upper) || fill_upper < 1) {
-    fill_upper <- 1
+  if (!is.finite(fill_upper) || fill_upper < 100) {
+    fill_upper <- 100
   }
   fill_limits <- c(0, fill_upper)
 
@@ -398,30 +399,30 @@ plot_area_map_single <- function(plot_tbl, size_label, output_png) {
       dplyr::filter(!is.na(.data$year))
 
     p <- ggplot2::ggplot(map_sf) +
-      ggplot2::geom_sf(ggplot2::aes(fill = scales::squish(.data$ratio_change, fill_limits)), color = "grey55", linewidth = 0.25) +
+      ggplot2::geom_sf(ggplot2::aes(fill = scales::squish(.data$ratio_percent, fill_limits)), color = "grey55", linewidth = 0.25) +
       ggplot2::facet_wrap(~year) +
-      ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 1, limits = fill_limits, oob = scales::squish, na.value = "grey90") +
+      ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 100, limits = fill_limits, oob = scales::squish, na.value = "grey90") +
       ggplot2::labs(
-        title = paste("Area CPUE ratio change:", size_label),
-        subtitle = "Ratio relative to the previous year",
-        fill = "Ratio"
+        title = paste("Area CPUE percent ratio:", size_label),
+        subtitle = "Percent relative to the previous year",
+        fill = "Percent"
       ) +
       ggplot2::theme_bw()
   } else {
     tile_tbl <- make_tile_layout(sort(unique(map_tbl$area))) |>
       dplyr::left_join(map_tbl, by = "area")
 
-    p <- ggplot2::ggplot(tile_tbl, ggplot2::aes(x = .data$x, y = .data$y, fill = scales::squish(.data$ratio_change, fill_limits))) +
+    p <- ggplot2::ggplot(tile_tbl, ggplot2::aes(x = .data$x, y = .data$y, fill = scales::squish(.data$ratio_percent, fill_limits))) +
       ggplot2::geom_tile(color = "grey55", linewidth = 0.35) +
       ggplot2::geom_text(ggplot2::aes(label = .data$area), size = 3) +
       ggplot2::facet_wrap(~year) +
-      ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 1, limits = fill_limits, oob = scales::squish, na.value = "grey90") +
+      ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", midpoint = 100, limits = fill_limits, oob = scales::squish, na.value = "grey90") +
       ggplot2::labs(
-        title = paste("Area CPUE ratio change:", size_label),
-        subtitle = "Ratio relative to the previous year",
+        title = paste("Area CPUE percent ratio:", size_label),
+        subtitle = "Percent relative to the previous year",
         x = NULL,
         y = NULL,
-        fill = "Ratio"
+        fill = "Percent"
       ) +
       ggplot2::theme_bw() +
       ggplot2::theme(axis.text = ggplot2::element_blank(), axis.ticks = ggplot2::element_blank())
@@ -521,7 +522,8 @@ area_cpue_tbl <- cleaned_long_tbl |>
   dplyr::group_by(.data$size_id, .data$area) |>
   dplyr::mutate(
     cpue_prev = dplyr::lag(.data$cpue_ratio),
-    ratio_change = dplyr::if_else(is.na(.data$cpue_prev) | .data$cpue_prev == 0, NA_real_, .data$cpue_ratio / .data$cpue_prev)
+    ratio_change = dplyr::if_else(is.na(.data$cpue_prev) | .data$cpue_prev == 0, NA_real_, .data$cpue_ratio / .data$cpue_prev),
+    ratio_percent = .data$ratio_change * 100
   ) |>
   dplyr::ungroup()
 
