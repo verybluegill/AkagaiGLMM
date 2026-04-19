@@ -280,9 +280,11 @@ make_depth_flags <- function(depth_tbl) {
       flag_depth_range_inverted = !is.na(.data$depth_shallow) & !is.na(.data$depth_deep) & .data$depth_shallow > .data$depth_deep,
       flag_depth_shallow_gt_deep = .data$flag_depth_range_inverted,
       flag_depth_range_large = !is.na(.data$depth_range) & .data$depth_range > 100,
+      flag_depth_range_gt100 = .data$flag_depth_range_large,
       flag_depth_mid_gt100 = !is.na(.data$depth_mid) & .data$depth_mid > 100,
+      flag_depth_shallow_gt100 = !is.na(.data$depth_shallow) & .data$depth_shallow > 100,
       flag_depth_deep_gt100 = !is.na(.data$depth_deep) & .data$depth_deep > 100,
-      flag_depth_suspicious = .data$flag_depth_parse_failed | .data$flag_depth_negative | .data$flag_depth_zero | .data$flag_depth_too_shallow | .data$flag_depth_too_deep | .data$flag_depth_range_inverted | .data$flag_depth_range_large | .data$flag_depth_mid_gt100 | .data$flag_depth_deep_gt100
+      flag_depth_suspicious = .data$flag_depth_parse_failed | .data$flag_depth_negative | .data$flag_depth_zero | .data$flag_depth_too_shallow | .data$flag_depth_too_deep | .data$flag_depth_range_inverted | .data$flag_depth_range_large | .data$flag_depth_mid_gt100 | .data$flag_depth_shallow_gt100 | .data$flag_depth_deep_gt100
     )
 }
 
@@ -441,6 +443,311 @@ make_depth_correlations <- function(plot_tbl) {
   dplyr::bind_rows(overall_tbl, by_year_tbl)
 }
 
+size_id_to_report_label <- function(size_id) {
+  dplyr::case_when(
+    size_id == "medium" ~ "Medium",
+    size_id == "dai" ~ "Large",
+    size_id == "toku" ~ "Special",
+    size_id == "tokudai" ~ "Extra large",
+    TRUE ~ as.character(size_id)
+  )
+}
+
+prepare_depth_check_context <- function(dat, clean_dat, depth_roles, effort_col, vessel_col) {
+  detected_cols <- list(
+    year = find_column_by_regex(dat, c("年.*令和", "^年$", "(^|[^[:alpha:]])year([^[:alpha:]]|$)")),
+    month = find_column_by_regex(dat, c("^月$", "(^|[^[:alpha:]])month([^[:alpha:]]|$)")),
+    day = find_column_by_regex(dat, c("^日$", "(^|[^[:alpha:]])day([^[:alpha:]]|$)")),
+    area = find_column_by_regex(dat, c("開始.*漁区.*番号", "終了.*漁区.*番号", "漁区", "区画", "mesh", "漁場", "(^|[^[:alpha:]])area([^[:alpha:]]|$)")),
+    total_count = find_column_by_regex(dat, c("漁獲個数.*合計", "採取個体数", "個体数", "尾数", "(^|[^[:alpha:]])count([^[:alpha:]]|$)"))
+  )
+
+  year_raw <- if (!is.null(detected_cols$year)) suppressWarnings(as.integer(dat[[detected_cols$year]])) else rep(NA_integer_, nrow(dat))
+  month_raw <- if (!is.null(detected_cols$month)) suppressWarnings(as.integer(dat[[detected_cols$month]])) else rep(NA_integer_, nrow(dat))
+  day_raw <- if (!is.null(detected_cols$day)) suppressWarnings(as.integer(dat[[detected_cols$day]])) else rep(NA_integer_, nrow(dat))
+  ymd_reiwa <- if (!is.null(detected_cols$year) && !is.null(detected_cols$month) && !is.null(detected_cols$day)) {
+    make_date_from_components(dat[[detected_cols$year]], dat[[detected_cols$month]], dat[[detected_cols$day]], mode = "reiwa")
+  } else {
+    rep(as.Date(NA), nrow(dat))
+  }
+
+  area_value <- if (!is.null(detected_cols$area)) clean_name_for_display(dat[[detected_cols$area]]) else rep(NA_character_, nrow(dat))
+  vessel_value <- if (!is.null(vessel_col)) clean_name_for_display(dat[[vessel_col]]) else rep(NA_character_, nrow(dat))
+  effort_value <- if (!is.null(effort_col)) parse_effort_hours(dat[[effort_col]]) else rep(NA_real_, nrow(dat))
+  effort_raw <- if (!is.null(effort_col)) as.character(dat[[effort_col]]) else rep(NA_character_, nrow(dat))
+
+  size_col_tbl <- find_size_columns(dat)
+  total_catch <- if (nrow(size_col_tbl) > 0) {
+    rowSums(as.data.frame(lapply(size_col_tbl$size_col, function(col_i) coerce_numeric_value(dat[[col_i]]))), na.rm = TRUE)
+  } else if (!is.null(detected_cols$total_count)) {
+    coerce_numeric_value(dat[[detected_cols$total_count]])
+  } else {
+    rep(NA_real_, nrow(dat))
+  }
+
+  date_lookup <- clean_dat |>
+    dplyr::select("row_id", "date", "year", "area") |>
+    dplyr::distinct(.data$row_id, .keep_all = TRUE)
+
+  dat |>
+    dplyr::transmute(
+      row_id = .data$row_id,
+      year = suppressWarnings(as.integer(format(ymd_reiwa, "%Y"))),
+      month = dplyr::coalesce(month_raw, suppressWarnings(as.integer(format(ymd_reiwa, "%m")))),
+      day = dplyr::coalesce(day_raw, suppressWarnings(as.integer(format(ymd_reiwa, "%d")))),
+      ymd_reiwa = ymd_reiwa,
+      vessel = vessel_value,
+      area = area_value,
+      `水深(m)浅い側` = if (!is.null(depth_roles$shallow_col)) as.character(dat[[depth_roles$shallow_col]]) else NA_character_,
+      `水深(m)深い側` = if (!is.null(depth_roles$deep_col)) as.character(dat[[depth_roles$deep_col]]) else NA_character_,
+      `曳網時間` = effort_raw,
+      effort_hours = effort_value,
+      `total catch` = total_catch
+    ) |>
+    dplyr::left_join(date_lookup, by = "row_id", suffix = c("", "_clean")) |>
+    dplyr::mutate(
+      year = dplyr::coalesce(.data$year, .data$year_clean),
+      area = dplyr::coalesce(.data$area, .data$area_clean)
+    ) |>
+    dplyr::select(-dplyr::any_of(c("date", "year_clean", "area_clean")))
+}
+
+save_flag_breakdowns <- function(flag_tbl, flag_col, output_stub) {
+  year_tbl <- flag_tbl |>
+    dplyr::filter(.data[[flag_col]]) |>
+    dplyr::count(.data$year, name = "n", sort = TRUE)
+  area_tbl <- flag_tbl |>
+    dplyr::filter(.data[[flag_col]]) |>
+    dplyr::count(.data$area, name = "n", sort = TRUE)
+  vessel_tbl <- flag_tbl |>
+    dplyr::filter(.data[[flag_col]]) |>
+    dplyr::count(.data$vessel, name = "n", sort = TRUE)
+
+  save_check_table(year_tbl, file.path("output", "check_tables", paste0(output_stub, "_year_counts.csv")))
+  save_check_table(area_tbl, file.path("output", "check_tables", paste0(output_stub, "_area_counts.csv")))
+  save_check_table(vessel_tbl, file.path("output", "check_tables", paste0(output_stub, "_vessel_counts.csv")))
+
+  list(year = year_tbl, area = area_tbl, vessel = vessel_tbl)
+}
+
+print_flag_bias_if_needed <- function(label, tbl) {
+  if (nrow(tbl) == 0 || sum(tbl$n, na.rm = TRUE) == 0) {
+    return(invisible(NULL))
+  }
+
+  share_top <- max(tbl$n, na.rm = TRUE) / sum(tbl$n, na.rm = TRUE)
+  if (is.finite(share_top) && share_top >= 0.5) {
+    cat(label, "is strongly concentrated; top share =", round(share_top, 3), "\n")
+  }
+}
+
+build_depth_rule_tables <- function(depth_master) {
+  depth_rule_raw <- depth_master |>
+    dplyr::transmute(
+      row_id = .data$row_id,
+      depth_rule = "depth_rule_raw",
+      depth_shallow = .data$depth_shallow,
+      depth_deep = .data$depth_deep,
+      depth_mid = .data$depth_mid,
+      depth_range = .data$depth_range
+    )
+
+  depth_rule_swapped <- depth_master |>
+    dplyr::transmute(
+      row_id = .data$row_id,
+      depth_rule = "depth_rule_swapped",
+      swapped_flag = .data$flag_depth_shallow_gt_deep,
+      shallow_fixed = dplyr::if_else(.data$flag_depth_shallow_gt_deep, .data$depth_deep, .data$depth_shallow),
+      deep_fixed = dplyr::if_else(.data$flag_depth_shallow_gt_deep, .data$depth_shallow, .data$depth_deep)
+    ) |>
+    dplyr::mutate(
+      mid_fixed = ifelse(!is.na(.data$shallow_fixed) & !is.na(.data$deep_fixed), (.data$shallow_fixed + .data$deep_fixed) / 2, NA_real_),
+      range_fixed = ifelse(!is.na(.data$shallow_fixed) & !is.na(.data$deep_fixed), .data$deep_fixed - .data$shallow_fixed, NA_real_)
+    )
+
+  depth_rule_trimmed <- depth_rule_swapped |>
+    dplyr::mutate(
+      trim_shallow_gt100 = !is.na(.data$shallow_fixed) & .data$shallow_fixed > 100,
+      trim_deep_gt100 = !is.na(.data$deep_fixed) & .data$deep_fixed > 100,
+      trim_mid_gt100 = !is.na(.data$mid_fixed) & .data$mid_fixed > 100,
+      trim_range_gt100 = !is.na(.data$range_fixed) & .data$range_fixed > 100,
+      shallow_trimmed = dplyr::if_else(.data$trim_shallow_gt100, NA_real_, .data$shallow_fixed),
+      deep_trimmed = dplyr::if_else(.data$trim_deep_gt100, NA_real_, .data$deep_fixed),
+      mid_trimmed = dplyr::if_else(.data$trim_mid_gt100 | .data$trim_range_gt100 | .data$trim_shallow_gt100 | .data$trim_deep_gt100, NA_real_, .data$mid_fixed),
+      range_trimmed = dplyr::if_else(.data$trim_mid_gt100 | .data$trim_range_gt100 | .data$trim_shallow_gt100 | .data$trim_deep_gt100, NA_real_, .data$range_fixed),
+      depth_rule = "depth_rule_trimmed"
+    )
+
+  list(
+    raw = depth_rule_raw,
+    swapped = depth_rule_swapped,
+    trimmed = depth_rule_trimmed
+  )
+}
+
+make_depth_rule_summary <- function(depth_master, rule_tbl, rule_name, shallow_col, deep_col, mid_col, range_col) {
+  metric_tbl <- dplyr::bind_rows(
+    make_depth_numeric_summary(rule_tbl[[shallow_col]], paste0(rule_name, ":depth_shallow")),
+    make_depth_numeric_summary(rule_tbl[[deep_col]], paste0(rule_name, ":depth_deep")),
+    make_depth_numeric_summary(rule_tbl[[mid_col]], paste0(rule_name, ":depth_mid")),
+    make_depth_numeric_summary(rule_tbl[[range_col]], paste0(rule_name, ":depth_range"))
+  ) |>
+    dplyr::mutate(scope = "overall", group = NA_character_)
+
+  year_tbl <- depth_master |>
+    dplyr::select("row_id", "year") |>
+    dplyr::left_join(rule_tbl, by = "row_id") |>
+    dplyr::group_by(.data$year) |>
+    dplyr::summarise(non_missing_n = sum(!is.na(.data[[mid_col]])), .groups = "drop") |>
+    dplyr::transmute(variable = paste0(rule_name, ":depth_mid"), statistic = "non_missing_n", value = .data$non_missing_n, scope = "year", group = as.character(.data$year))
+
+  area_tbl <- depth_master |>
+    dplyr::select("row_id", "area") |>
+    dplyr::left_join(rule_tbl, by = "row_id") |>
+    dplyr::group_by(.data$area) |>
+    dplyr::summarise(non_missing_n = sum(!is.na(.data[[mid_col]])), .groups = "drop") |>
+    dplyr::transmute(variable = paste0(rule_name, ":depth_mid"), statistic = "non_missing_n", value = .data$non_missing_n, scope = "area", group = as.character(.data$area))
+
+  vessel_tbl <- depth_master |>
+    dplyr::select("row_id", "vessel") |>
+    dplyr::left_join(rule_tbl, by = "row_id") |>
+    dplyr::group_by(.data$vessel) |>
+    dplyr::summarise(non_missing_n = sum(!is.na(.data[[mid_col]])), .groups = "drop") |>
+    dplyr::transmute(variable = paste0(rule_name, ":depth_mid"), statistic = "non_missing_n", value = .data$non_missing_n, scope = "vessel", group = as.character(.data$vessel))
+
+  dplyr::bind_rows(metric_tbl, year_tbl, area_tbl, vessel_tbl)
+}
+
+build_model_input_preview <- function(depth_master, size_long_tbl, rule_tbl, rule_type = c("raw", "swapped", "trimmed")) {
+  rule_type <- match.arg(rule_type)
+
+  base_tbl <- size_long_tbl |>
+    dplyr::filter(!is.na(.data$effort_hours), .data$effort_hours > 0) |>
+    dplyr::mutate(
+      catch_total = .data$catch,
+      log_effort = log(.data$effort_hours),
+      cpue_total = .data$catch / .data$effort_hours
+    )
+
+  if (identical(rule_type, "raw")) {
+    return(base_tbl |>
+      dplyr::transmute(
+        row_id = .data$row_id,
+        catch_total = .data$catch_total,
+        effort_hours = .data$effort_hours,
+        log_effort = .data$log_effort,
+        cpue_total = .data$cpue_total,
+        year = .data$year,
+        month = .data$month,
+        area = .data$area,
+        vessel = .data$vessel,
+        depth_shallow = .data$depth_shallow,
+        depth_deep = .data$depth_deep,
+        depth_mid = .data$depth_mid,
+        depth_range = .data$depth_range,
+        swapped_depth_shallow = .data$depth_shallow,
+        swapped_depth_deep = .data$depth_deep,
+        swapped_depth_mid = .data$depth_mid,
+        swapped_depth_range = .data$depth_range,
+        trimmed_depth_shallow = .data$depth_shallow,
+        trimmed_depth_deep = .data$depth_deep,
+        trimmed_depth_mid = .data$depth_mid,
+        trimmed_depth_range = .data$depth_range
+      ))
+  }
+
+  if (identical(rule_type, "swapped")) {
+    return(base_tbl |>
+      dplyr::left_join(rule_tbl, by = "row_id") |>
+      dplyr::transmute(
+        row_id = .data$row_id,
+        catch_total = .data$catch_total,
+        effort_hours = .data$effort_hours,
+        log_effort = .data$log_effort,
+        cpue_total = .data$cpue_total,
+        year = .data$year,
+        month = .data$month,
+        area = .data$area,
+        vessel = .data$vessel,
+        depth_shallow = .data$depth_shallow,
+        depth_deep = .data$depth_deep,
+        depth_mid = .data$depth_mid,
+        depth_range = .data$depth_range,
+        swapped_depth_shallow = .data$shallow_fixed,
+        swapped_depth_deep = .data$deep_fixed,
+        swapped_depth_mid = .data$mid_fixed,
+        swapped_depth_range = .data$range_fixed,
+        trimmed_depth_shallow = .data$shallow_fixed,
+        trimmed_depth_deep = .data$deep_fixed,
+        trimmed_depth_mid = .data$mid_fixed,
+        trimmed_depth_range = .data$range_fixed
+      ))
+  }
+
+  base_tbl |>
+    dplyr::left_join(rule_tbl, by = "row_id") |>
+    dplyr::transmute(
+      row_id = .data$row_id,
+      catch_total = .data$catch_total,
+      effort_hours = .data$effort_hours,
+      log_effort = .data$log_effort,
+      cpue_total = .data$cpue_total,
+      year = .data$year,
+      month = .data$month,
+      area = .data$area,
+      vessel = .data$vessel,
+      depth_shallow = .data$depth_shallow,
+      depth_deep = .data$depth_deep,
+      depth_mid = .data$depth_mid,
+      depth_range = .data$depth_range,
+      swapped_depth_shallow = .data$shallow_fixed,
+      swapped_depth_deep = .data$deep_fixed,
+      swapped_depth_mid = .data$mid_fixed,
+      swapped_depth_range = .data$range_fixed,
+      trimmed_depth_shallow = .data$shallow_trimmed,
+      trimmed_depth_deep = .data$deep_trimmed,
+      trimmed_depth_mid = .data$mid_trimmed,
+      trimmed_depth_range = .data$range_trimmed
+    )
+}
+
+plot_depth_cpue_scatter_diagnostic <- function(plot_tbl, output_png, plot_title, y_free = FALSE) {
+  p <- ggplot2::ggplot(plot_tbl, ggplot2::aes(x = .data$depth_mid, y = .data$cpue)) +
+    ggplot2::geom_point(alpha = 0.3, size = 1.1, color = "#2C7FB8") +
+    ggplot2::facet_wrap(~size_label, scales = if (y_free) "free_y" else "fixed") +
+    ggplot2::labs(title = plot_title, x = "Depth (m)", y = "CPUE (count/hour)") +
+    theme_akagai_report()
+
+  ggplot2::ggsave(output_png, p, width = 11, height = 8, dpi = 300)
+  cat("saved:", output_png, "\n")
+}
+
+plot_report_depth_cpue <- function(summary_tbl, y_col, output_png, plot_title, ribbon = FALSE) {
+  plot_tbl <- summary_tbl |>
+    dplyr::filter(!is.na(.data[[y_col]])) |>
+    dplyr::mutate(size_label = factor(size_id_to_report_label(.data$size_id), levels = c("Medium", "Large", "Special", "Extra large")))
+
+  p <- ggplot2::ggplot(plot_tbl, ggplot2::aes(x = .data$depth_bin_center, y = .data[[y_col]])) +
+    {if (ribbon) ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$q25, ymax = .data$q75), fill = "#9ECAE1", alpha = 0.25) else ggplot2::geom_blank()} +
+    ggplot2::geom_line(linewidth = 1.1, color = "#2C7FB8") +
+    ggplot2::geom_point(size = 1.8, color = "#6BAED6") +
+    ggplot2::facet_wrap(~size_label, ncol = 2, scales = "free_y") +
+    ggplot2::labs(title = plot_title, x = "Depth (m)", y = "CPUE (count/hour)") +
+    ggplot2::theme_bw() +
+    ggplot2::theme(
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(color = "#E6E6E6", linewidth = 0.25),
+      strip.background = ggplot2::element_rect(fill = "white", color = "white"),
+      strip.text = ggplot2::element_text(face = "bold"),
+      legend.position = "none",
+      axis.title = ggplot2::element_text(face = "bold"),
+      plot.title = ggplot2::element_text(face = "bold")
+    )
+
+  ggplot2::ggsave(output_png, p, width = 10, height = 8, dpi = 300)
+  cat("saved:", output_png, "\n")
+}
+
 run_check_depth_cpue_patterns <- function() {
   paths <- get_akagai_default_paths()
   excel_obj <- load_akagai_excel(paths$excel_path)
@@ -449,6 +756,7 @@ run_check_depth_cpue_patterns <- function() {
     dplyr::mutate(row_id = dplyr::row_number())
 
   analysis_row_ids <- clean_dat$row_id
+  date_out_of_scope_n <- sum(!(dat$row_id %in% analysis_row_ids))
   depth_roles <- detect_depth_role_columns(dat)
   effort_col <- detect_effort_column(dat)
   vessel_col <- detect_vessel_column(dat)
@@ -483,14 +791,19 @@ run_check_depth_cpue_patterns <- function() {
   date_lookup <- clean_dat |>
     dplyr::select("row_id", "date", "year", "area")
   date_lookup <- dplyr::distinct(date_lookup, .data$row_id, .keep_all = TRUE)
+  context_tbl <- prepare_depth_check_context(dat, clean_dat, depth_roles, effort_col, vessel_col)
 
   depth_master <- dat |>
     dplyr::select("row_id") |>
     dplyr::left_join(date_lookup, by = "row_id") |>
+    dplyr::left_join(context_tbl, by = "row_id", suffix = c("", "_context")) |>
     dplyr::left_join(depth_tbl, by = "row_id") |>
     dplyr::mutate(
-      vessel = if (!is.null(vessel_col)) clean_name_for_display(dat[[vessel_col]][match(.data$row_id, dat$row_id)]) else NA_character_
+      year = dplyr::coalesce(.data$year, .data$year_context),
+      area = dplyr::coalesce(.data$area, .data$area_context),
+      vessel = .data$vessel
     ) |>
+    dplyr::select(-dplyr::any_of(c("year_context", "area_context"))) |>
     dplyr::filter(.data$row_id %in% analysis_row_ids)
 
   flag_cols <- c(
@@ -502,8 +815,10 @@ run_check_depth_cpue_patterns <- function() {
     "flag_depth_too_deep",
     "flag_depth_range_inverted",
     "flag_depth_shallow_gt_deep",
+    "flag_depth_range_gt100",
     "flag_depth_range_large",
     "flag_depth_mid_gt100",
+    "flag_depth_shallow_gt100",
     "flag_depth_deep_gt100",
     "flag_depth_suspicious"
   )
@@ -537,6 +852,43 @@ run_check_depth_cpue_patterns <- function() {
     )
   save_check_table(depth_summary, file.path("output", "check_tables", "depth_summary.csv"))
   save_check_table(depth_master, file.path("output", "check_tables", "depth_cleaning_flags.csv"))
+
+  flag_export_specs <- list(
+    list(flag = "flag_depth_shallow_gt_deep", rows = "depth_shallow_gt_deep_rows.csv", stub = "depth_shallow_gt_deep"),
+    list(flag = "flag_depth_range_gt100", rows = "depth_range_gt100_rows.csv", stub = "depth_range_gt100"),
+    list(flag = "flag_depth_mid_gt100", rows = "depth_mid_gt100_rows.csv", stub = "depth_mid_gt100"),
+    list(flag = "flag_depth_shallow_gt100", rows = "depth_shallow_gt100_rows.csv", stub = "depth_shallow_gt100"),
+    list(flag = "flag_depth_deep_gt100", rows = "depth_deep_gt100_rows.csv", stub = "depth_deep_gt100")
+  )
+
+  flag_breakdown_store <- list()
+  for (spec_i in flag_export_specs) {
+    rows_i <- depth_master |>
+      dplyr::filter(.data[[spec_i$flag]]) |>
+      dplyr::select("row_id", "year", "month", "day", "ymd_reiwa", "vessel", "area", "水深(m)浅い側", "水深(m)深い側", "depth_shallow", "depth_deep", "depth_mid", "depth_range", "曳網時間", "effort_hours", "total catch")
+    save_check_table(rows_i, file.path("output", "check_tables", spec_i$rows))
+    flag_breakdown_store[[spec_i$flag]] <- save_flag_breakdowns(depth_master, spec_i$flag, spec_i$stub)
+  }
+
+  cat("top years for shallow>deep =\n")
+  print(utils::head(flag_breakdown_store[["flag_depth_shallow_gt_deep"]]$year, 10))
+  cat("top areas for shallow>deep =\n")
+  print(utils::head(flag_breakdown_store[["flag_depth_shallow_gt_deep"]]$area, 10))
+  cat("top vessels for shallow>deep =\n")
+  print(utils::head(flag_breakdown_store[["flag_depth_shallow_gt_deep"]]$vessel, 10))
+  cat("top years for range>100 =\n")
+  print(utils::head(flag_breakdown_store[["flag_depth_range_gt100"]]$year, 10))
+  cat("top areas for range>100 =\n")
+  print(utils::head(flag_breakdown_store[["flag_depth_range_gt100"]]$area, 10))
+  cat("top vessels for range>100 =\n")
+  print(utils::head(flag_breakdown_store[["flag_depth_range_gt100"]]$vessel, 10))
+
+  print_flag_bias_if_needed("shallow>deep year", flag_breakdown_store[["flag_depth_shallow_gt_deep"]]$year)
+  print_flag_bias_if_needed("shallow>deep area", flag_breakdown_store[["flag_depth_shallow_gt_deep"]]$area)
+  print_flag_bias_if_needed("shallow>deep vessel", flag_breakdown_store[["flag_depth_shallow_gt_deep"]]$vessel)
+  print_flag_bias_if_needed("range>100 year", flag_breakdown_store[["flag_depth_range_gt100"]]$year)
+  print_flag_bias_if_needed("range>100 area", flag_breakdown_store[["flag_depth_range_gt100"]]$area)
+  print_flag_bias_if_needed("range>100 vessel", flag_breakdown_store[["flag_depth_range_gt100"]]$vessel)
 
   depth_extreme_breakdown <- tibble::tibble(
     metric = c("shallow_gt_100", "deep_gt_100", "mid_gt_100", "both_shallow_and_deep_gt_100", "deep_only_gt_100", "shallow_only_gt_100", "range_gt_100"),
@@ -617,7 +969,7 @@ run_check_depth_cpue_patterns <- function() {
   size_long_tbl <- size_long_tbl |>
     dplyr::left_join(
       depth_master |>
-        dplyr::select("row_id", "date", "year", "area", "vessel", "depth_shallow", "depth_deep", "depth_mid", "depth_range"),
+        dplyr::select("row_id", "date", "year", "month", "area", "depth_shallow", "depth_deep", "depth_mid", "depth_range"),
       by = "row_id"
     ) |>
     dplyr::mutate(cpue = .data$catch / .data$effort_hours)
@@ -646,16 +998,166 @@ run_check_depth_cpue_patterns <- function() {
   print(utils::head(dplyr::distinct(plot_tbl, .data$size_label, .data$year, .data$area, .data$depth_mid, .data$cpue), 12))
   save_check_table(plot_tbl, file.path("output", "check_tables", "depth_cpue_plot_data.csv"))
 
+  depth_rules <- build_depth_rule_tables(depth_master)
+  depth_rule_summary <- dplyr::bind_rows(
+    make_depth_rule_summary(depth_master, depth_rules$raw, "depth_rule_raw", "depth_shallow", "depth_deep", "depth_mid", "depth_range"),
+    make_depth_rule_summary(depth_master, depth_rules$swapped, "depth_rule_swapped", "shallow_fixed", "deep_fixed", "mid_fixed", "range_fixed"),
+    make_depth_rule_summary(depth_master, depth_rules$trimmed, "depth_rule_trimmed", "shallow_trimmed", "deep_trimmed", "mid_trimmed", "range_trimmed")
+  )
+  save_check_table(depth_rule_summary, file.path("output", "check_tables", "depth_rule_comparison_summary.csv"))
+  save_check_table(
+    depth_master |>
+      dplyr::select("row_id", "year", "month", "day", "ymd_reiwa", "vessel", "area", "depth_shallow", "depth_deep", "depth_mid", "depth_range") |>
+      dplyr::left_join(depth_rules$swapped, by = "row_id") |>
+      dplyr::filter(.data$swapped_flag),
+    file.path("output", "check_tables", "depth_rule_swapped_preview.csv")
+  )
+  save_check_table(
+    depth_master |>
+      dplyr::select("row_id", "year", "month", "day", "ymd_reiwa", "vessel", "area", "depth_shallow", "depth_deep", "depth_mid", "depth_range") |>
+      dplyr::left_join(depth_rules$trimmed, by = "row_id") |>
+      dplyr::filter(.data$trim_shallow_gt100 | .data$trim_deep_gt100 | .data$trim_mid_gt100 | .data$trim_range_gt100),
+    file.path("output", "check_tables", "depth_rule_trimmed_preview.csv")
+  )
+
+  model_input_raw <- build_model_input_preview(depth_master, size_long_tbl, depth_rules$raw, "raw")
+  model_input_swapped <- build_model_input_preview(depth_master, size_long_tbl, depth_rules$swapped, "swapped")
+  model_input_trimmed <- build_model_input_preview(depth_master, size_long_tbl, depth_rules$trimmed, "trimmed")
+  save_check_table(model_input_raw, file.path("output", "check_tables", "model_input_preview_raw_depth.csv"))
+  save_check_table(model_input_swapped, file.path("output", "check_tables", "model_input_preview_swapped_depth.csv"))
+  save_check_table(model_input_trimmed, file.path("output", "check_tables", "model_input_preview_trimmed_depth.csv"))
+
   plot_depth_histogram(depth_master, depth_limit = NULL, output_png = file.path("output", "check_figures", "depth_histogram_full.png"), plot_title = "Depth distribution")
   plot_depth_histogram(depth_master, depth_limit = 100, output_png = file.path("output", "check_figures", "depth_histogram_trim100.png"), plot_title = "Depth distribution (<= 100 m)")
   plot_depth_histogram(depth_master, depth_limit = 60, output_png = file.path("output", "check_figures", "depth_histogram_trim60.png"), plot_title = "Depth distribution (<= 60 m)")
   plot_depth_by_year_boxplot(depth_master, depth_limit = NULL, output_png = file.path("output", "check_figures", "depth_by_year_boxplot_full.png"), plot_title = "Depth by year")
   plot_depth_by_year_boxplot(depth_master, depth_limit = 100, output_png = file.path("output", "check_figures", "depth_by_year_boxplot_trim100.png"), plot_title = "Depth by year (<= 100 m)")
   plot_depth_missing_by_year_area(depth_master)
-  plot_depth_cpue_scatter(plot_tbl, output_png = file.path("output", "check_figures", "depth_cpue_by_size_scatter_full.png"), plot_title = "Depth and CPUE by size class", smooth_method = "lm", depth_limit = NULL)
-  plot_depth_cpue_scatter(plot_tbl, output_png = file.path("output", "check_figures", "depth_cpue_by_size_scatter_trim100.png"), plot_title = "Depth and CPUE by size class (<= 100 m)", smooth_method = "lm", depth_limit = 100)
-  plot_depth_cpue_scatter(plot_tbl, output_png = file.path("output", "check_figures", "depth_cpue_by_size_scatter_loess_trim100.png"), plot_title = "Depth and CPUE by size class (loess, <= 100 m)", smooth_method = "loess", depth_limit = 100)
+  plot_depth_cpue_scatter(plot_tbl, output_png = file.path("output", "check_figures", "diagnostic_depth_cpue_scatter_full.png"), plot_title = "Depth and CPUE by size class", smooth_method = "lm", depth_limit = NULL)
   plot_depth_shallow_vs_deep_distribution(depth_master)
+
+  cpue_extreme_tbl <- cpue_main_cleaned |>
+    dplyr::group_by(.data$size_id, .data$size_label) |>
+    dplyr::mutate(
+      threshold_99 = stats::quantile(.data$cpue, 0.99, na.rm = TRUE),
+      threshold_995 = stats::quantile(.data$cpue, 0.995, na.rm = TRUE),
+      threshold_999 = stats::quantile(.data$cpue, 0.999, na.rm = TRUE)
+    ) |>
+    dplyr::ungroup() |>
+    dplyr::filter(.data$cpue >= .data$threshold_99 | .data$cpue >= .data$threshold_995 | .data$cpue >= .data$threshold_999) |>
+    dplyr::transmute(
+      row_id = .data$row_id,
+      size_id = .data$size_id,
+      size_label = as.character(.data$size_label),
+      year = .data$year,
+      date = .data$date,
+      vessel = .data$vessel,
+      area = .data$area,
+      depth_shallow = .data$depth_shallow,
+      depth_deep = .data$depth_deep,
+      depth_mid = .data$depth_mid,
+      effort_hours = .data$effort_hours,
+      catch = .data$catch,
+      cpue = .data$cpue,
+      flag_top_1pct = .data$cpue >= .data$threshold_99,
+      flag_top_0_5pct = .data$cpue >= .data$threshold_995,
+      flag_top_0_1pct = .data$cpue >= .data$threshold_999
+    )
+  save_check_table(cpue_extreme_tbl, file.path("output", "check_tables", "extreme_cpue_by_size.csv"))
+
+  short_effort_summary <- cpue_main_cleaned |>
+    dplyr::group_by(.data$size_id, .data$size_label) |>
+    dplyr::summarise(
+      n_rows = dplyr::n(),
+      effort_lt_0_5 = sum(.data$effort_hours < 0.5, na.rm = TRUE),
+      effort_lt_1 = sum(.data$effort_hours < 1, na.rm = TRUE),
+      .groups = "drop"
+    )
+  save_check_table(short_effort_summary, file.path("output", "check_tables", "short_effort_summary.csv"))
+
+  trimmed_plot_data <- cpue_main_cleaned |>
+    dplyr::filter(.data$year %in% 2020:2024, .data$effort_hours > 0, !is.na(.data$depth_mid), .data$depth_mid <= 100) |>
+    dplyr::group_by(.data$size_id) |>
+    dplyr::mutate(
+      cpue_q99 = stats::quantile(.data$cpue, 0.99, na.rm = TRUE),
+      cpue_plot_trim = pmin(.data$cpue, .data$cpue_q99),
+      plot_filter_effort_ge1 = .data$effort_hours >= 1
+    ) |>
+    dplyr::ungroup()
+  save_check_table(trimmed_plot_data, file.path("output", "check_tables", "depth_cpue_trimmed_plot_data.csv"))
+
+  plot_depth_cpue_scatter_diagnostic(
+    trimmed_plot_data |>
+      dplyr::filter(.data$plot_filter_effort_ge1) |>
+      dplyr::mutate(cpue = .data$cpue_plot_trim),
+    output_png = file.path("output", "check_figures", "diagnostic_depth_cpue_scatter_trimmed.png"),
+    plot_title = "Diagnostic depth and CPUE by size class (trimmed)",
+    y_free = FALSE
+  )
+
+  plot_depth_cpue_scatter_diagnostic(
+    trimmed_plot_data |>
+      dplyr::filter(.data$plot_filter_effort_ge1) |>
+      dplyr::mutate(cpue = .data$cpue_plot_trim),
+    output_png = file.path("output", "check_figures", "depth_cpue_by_size_scatter_trimmed.png"),
+    plot_title = "Depth and CPUE by size class (trimmed)",
+    y_free = FALSE
+  )
+
+  plot_depth_cpue_scatter_diagnostic(
+    trimmed_plot_data |>
+      dplyr::filter(.data$plot_filter_effort_ge1) |>
+      dplyr::mutate(cpue = .data$cpue_plot_trim),
+    output_png = file.path("output", "check_figures", "depth_cpue_by_size_scatter_trimmed_free_y.png"),
+    plot_title = "Depth and CPUE by size class (trimmed, free y)",
+    y_free = TRUE
+  )
+
+  depth_bin_cpue_summary <- trimmed_plot_data |>
+    dplyr::filter(.data$plot_filter_effort_ge1) |>
+    dplyr::mutate(
+      depth_bin_2m = floor(.data$depth_mid / 2) * 2,
+      depth_bin_center = .data$depth_bin_2m + 1
+    ) |>
+    dplyr::group_by(.data$size_id, .data$depth_bin_2m, .data$depth_bin_center) |>
+    dplyr::summarise(
+      n = dplyr::n(),
+      median_cpue = stats::median(.data$cpue_plot_trim, na.rm = TRUE),
+      mean_cpue = mean(.data$cpue_plot_trim, na.rm = TRUE),
+      trimmed_mean_cpue = mean(.data$cpue_plot_trim, na.rm = TRUE, trim = 0.1),
+      q25 = as.numeric(stats::quantile(.data$cpue_plot_trim, 0.25, na.rm = TRUE)),
+      q75 = as.numeric(stats::quantile(.data$cpue_plot_trim, 0.75, na.rm = TRUE)),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      median_cpue = dplyr::if_else(.data$n < 5, NA_real_, .data$median_cpue),
+      mean_cpue = dplyr::if_else(.data$n < 5, NA_real_, .data$mean_cpue),
+      trimmed_mean_cpue = dplyr::if_else(.data$n < 5, NA_real_, .data$trimmed_mean_cpue),
+      q25 = dplyr::if_else(.data$n < 5, NA_real_, .data$q25),
+      q75 = dplyr::if_else(.data$n < 5, NA_real_, .data$q75)
+    )
+  save_check_table(depth_bin_cpue_summary, file.path("output", "check_tables", "depth_bin_cpue_summary.csv"))
+
+  if (max(depth_bin_cpue_summary$median_cpue, na.rm = TRUE) <= 1.5) {
+    cat("report plot will prioritize median because y-range is visually stable.\n")
+  } else {
+    cat("report plot y-range is wide; median is prioritized for readability.\n")
+  }
+
+  plot_report_depth_cpue(
+    depth_bin_cpue_summary,
+    y_col = "median_cpue",
+    output_png = file.path("output", "check_figures", "report_depth_cpue_binned_median.png"),
+    plot_title = "Depth-binned median CPUE by size class",
+    ribbon = TRUE
+  )
+  plot_report_depth_cpue(
+    depth_bin_cpue_summary,
+    y_col = "trimmed_mean_cpue",
+    output_png = file.path("output", "check_figures", "report_depth_cpue_binned_trimmed_mean.png"),
+    plot_title = "Depth-binned trimmed mean CPUE by size class",
+    ribbon = FALSE
+  )
 
   corr_tbl <- make_depth_correlations(plot_tbl)
   save_check_table(corr_tbl, file.path("output", "check_tables", "depth_cpue_correlations.csv"))
@@ -671,21 +1173,59 @@ run_check_depth_cpue_patterns <- function() {
   )
   save_check_table(depth_missing_model_note, file.path("output", "check_tables", "depth_missing_model_note.csv"))
 
+  data_cleaning_candidates <- tibble::tibble(
+    `cleaning candidate` = c("drop out-of-period years", "swap shallow/deep when inverted", "hold or set depth_mid > 100 to NA", "hold or set depth_range > 100 to NA", "exclude very short effort from display", "inspect extreme CPUE rows"),
+    `target variable` = c("year/date", "depth_shallow/depth_deep", "depth_mid", "depth_range", "effort_hours", "cpue"),
+    reason = c(
+      "解析対象年は 2020:2024 に固定",
+      "shallow > deep は列意味逆転または入力順の不安定さを示す",
+      "depth 列の意味確認前にそのまま本番投入しないため",
+      "range > 100 は入力規則の不安定さを示すため",
+      "短時間 effort が CPUE を過大化し得るため",
+      "高 CPUE 外れ値の原票確認が必要なため"
+    ),
+    `affected rows` = c(
+      date_out_of_scope_n,
+      sum(depth_master$flag_depth_shallow_gt_deep, na.rm = TRUE),
+      sum(depth_master$flag_depth_mid_gt100, na.rm = TRUE),
+      sum(depth_master$flag_depth_range_gt100, na.rm = TRUE),
+      sum(cpue_main_cleaned$effort_hours < 1, na.rm = TRUE),
+      nrow(cpue_extreme_tbl)
+    ),
+    `expected impact` = c(
+      "解析期間を統一",
+      "depth 順序の一貫性を改善",
+      "depth 代表値の極端値を保留できる",
+      "depth 幅の極端値を保留できる",
+      "発表用図の見え方を安定化",
+      "CPUE 外れ値の原因特定"
+    ),
+    priority = c("high", "high", "high", "high", "medium", "high")
+  )
+  save_check_table(data_cleaning_candidates, file.path("output", "check_tables", "data_cleaning_candidates.csv"))
+
   model_note_tbl <- tibble::tibble(
-    candidate = c("depth_none", "depth_linear", "depth_quadratic", "depth_spline"),
+    candidate = c("depth_none", "depth_raw", "depth_swapped", "depth_trimmed", "depth_shallow fixed effect", "depth_mid fixed effect", "depth quadratic", "depth nonlinear", "count + offset(log effort)", "CPUE summary-only"),
     note = c(
-      "欠損や外れ値が大きい場合の比較基準",
-      "まずは fixed effect として depth_shallow または depth_mid を線形投入する候補",
-      "深度と CPUE の曲線関係を疑う場合の 2 次項候補",
-      "非線形が強そうなら spline/GAM 的に扱う候補"
+      "depth を使わない基準モデル",
+      "raw shallow/deep/mid/range をそのまま使う候補",
+      "inversion 修正後の depth を使う候補",
+      "swapped 後に >100 を保留した depth を使う候補",
+      "shallow 側を fixed effect で投入",
+      "mid を fixed effect で投入",
+      "2次項で曲線を許す候補",
+      "spline/GAM など非線形候補",
+      "GLMM 本命候補",
+      "発表用・要約用の比較候補"
     )
   )
-  save_check_table(model_note_tbl, file.path("output", "check_tables", "depth_model_candidate_note.csv"))
+  save_check_table(model_note_tbl, file.path("output", "check_tables", "model_structure_candidates.csv"))
 
   invisible(list(
     depth_summary = depth_summary,
     flag_count_tbl = flag_count_tbl,
-    corr_tbl = corr_tbl
+    corr_tbl = corr_tbl,
+    depth_rule_summary = depth_rule_summary
   ))
 }
 

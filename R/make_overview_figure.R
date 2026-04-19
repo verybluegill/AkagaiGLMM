@@ -12,6 +12,7 @@ load_project_packages(
 
 ensure_project_dirs()
 dir.create(file.path("output", "check_tables"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path("output", "check_figures"), showWarnings = FALSE, recursive = TRUE)
 
 get_akagai_default_paths <- function() {
   list(
@@ -231,6 +232,31 @@ make_date_from_components <- function(year_value, month_value, day_value, mode =
 choose_best_date_vector <- function(candidate_list) {
   if (length(candidate_list) == 0) {
     return(list(name = NA_character_, date = rep(as.Date(NA), 0), success_rate = NA_real_))
+  }
+
+  if ("ymd_reiwa" %in% names(candidate_list)) {
+    date_i <- candidate_list[["ymd_reiwa"]]
+    year_i <- suppressWarnings(as.integer(format(date_i, "%Y")))
+    in_period_i <- !is.na(date_i) & year_i %in% 2020:2024
+    score_tbl <- tibble::tibble(
+      candidate_name = "ymd_reiwa",
+      success_rate = mean(!is.na(date_i)),
+      in_period_rate = mean(in_period_i),
+      in_period_count = sum(in_period_i),
+      in_range_rate = mean(year_i %in% 2020:2024, na.rm = TRUE),
+      in_range_count = sum(year_i %in% 2020:2024, na.rm = TRUE),
+      min_date = if (all(is.na(date_i))) as.Date(NA) else min(date_i, na.rm = TRUE),
+      max_date = if (all(is.na(date_i))) as.Date(NA) else max(date_i, na.rm = TRUE),
+      year_range = if (all(is.na(year_i))) NA_character_ else paste(range(year_i, na.rm = TRUE), collapse = " to ")
+    )
+
+    return(list(
+      name = "ymd_reiwa",
+      fallback_name = if (length(candidate_list) >= 2) names(candidate_list)[names(candidate_list) != "ymd_reiwa"][[1]] else NA_character_,
+      date = date_i,
+      success_rate = mean(!is.na(date_i)),
+      score_table = score_tbl
+    ))
   }
 
   analysis_period <- get_akagai_analysis_period()
@@ -644,6 +670,185 @@ theme_akagai_report <- function(base_size = 12) {
     )
 }
 
+size_id_to_label_en <- function(size_id) {
+  dplyr::case_when(
+    size_id == "medium" ~ "Medium",
+    size_id == "dai" ~ "Large",
+    size_id == "toku" ~ "Special",
+    size_id == "tokudai" ~ "Extra large",
+    size_id == "waregai" ~ "Broken shell",
+    size_id == "sho" ~ "Small",
+    size_id == "shosho" ~ "Very small",
+    TRUE ~ as.character(size_id)
+  )
+}
+
+detect_effort_column_overview <- function(dat) {
+  find_column_by_regex(
+    dat,
+    c("曳網時間", "操業時間", "duration", "effort", "hours")
+  )
+}
+
+parse_effort_hours_overview <- function(x) {
+  if (inherits(x, "difftime")) {
+    return(as.numeric(x, units = "hours"))
+  }
+
+  if (inherits(x, "POSIXt")) {
+    hour_value <- as.numeric(format(x, "%H"))
+    minute_value <- as.numeric(format(x, "%M"))
+    second_value <- as.numeric(format(x, "%S"))
+    return(hour_value + minute_value / 60 + second_value / 3600)
+  }
+
+  if (is.numeric(x)) {
+    out <- as.numeric(x)
+    out[!is.na(out) & out < 1] <- out[!is.na(out) & out < 1] * 24
+    return(out)
+  }
+
+  x_chr <- trimws(as.character(x))
+  x_chr[x_chr %in% c("", "NA", "NaN")] <- NA_character_
+  colon_idx <- stringr::str_detect(x_chr, ":")
+  out <- suppressWarnings(as.numeric(x_chr))
+  out[!is.na(out) & out < 1] <- out[!is.na(out) & out < 1] * 24
+
+  if (any(colon_idx, na.rm = TRUE)) {
+    split_mat <- stringr::str_split_fixed(x_chr[colon_idx], ":", 3)
+    hour_value <- suppressWarnings(as.numeric(split_mat[, 1]))
+    minute_value <- suppressWarnings(as.numeric(split_mat[, 2]))
+    second_value <- suppressWarnings(as.numeric(split_mat[, 3]))
+    second_value[is.na(second_value)] <- 0
+    out[colon_idx] <- hour_value + minute_value / 60 + second_value / 3600
+  }
+
+  out
+}
+
+make_annual_diagnostic_data <- function(clean_dat, raw_dat) {
+  effort_col <- detect_effort_column_overview(raw_dat)
+
+  if (is.null(effort_col)) {
+    warning("effort 列を検出できなかったため annual CPUE 図を作成しません。")
+    return(NULL)
+  }
+
+  tow_effort_tbl <- tibble::tibble(
+    row_id = seq_len(nrow(raw_dat)),
+    effort_hours = parse_effort_hours_overview(raw_dat[[effort_col]])
+  ) |>
+    dplyr::filter(.data$row_id %in% clean_dat$row_id) |>
+    dplyr::distinct(.data$row_id, .keep_all = TRUE)
+
+  clean_dat_effort <- clean_dat |>
+    dplyr::left_join(tow_effort_tbl, by = "row_id")
+
+  year_effort_tbl <- clean_dat_effort |>
+    dplyr::distinct(.data$row_id, .data$year, .data$effort_hours) |>
+    dplyr::group_by(.data$year) |>
+    dplyr::summarise(total_effort_hours = sum(.data$effort_hours, na.rm = TRUE), .groups = "drop")
+
+  year_count_tbl <- clean_dat_effort |>
+    dplyr::group_by(.data$year) |>
+    dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
+
+  total_tbl <- year_count_tbl |>
+    dplyr::left_join(year_effort_tbl, by = "year") |>
+    dplyr::mutate(
+      cpue_ratio = dplyr::if_else(!is.na(.data$total_effort_hours) & .data$total_effort_hours > 0, .data$total_count / .data$total_effort_hours, NA_real_)
+    )
+
+  size_order <- c("medium", "dai", "toku", "tokudai")
+  by_size_count_tbl <- clean_dat_effort |>
+    dplyr::filter(.data$size %in% size_order) |>
+    dplyr::group_by(.data$year, .data$size) |>
+    dplyr::summarise(total_count = sum(.data$count, na.rm = TRUE), .groups = "drop")
+
+  by_size_tbl <- by_size_count_tbl |>
+    dplyr::left_join(year_effort_tbl, by = "year") |>
+    dplyr::mutate(
+      cpue_ratio = dplyr::if_else(!is.na(.data$total_effort_hours) & .data$total_effort_hours > 0, .data$total_count / .data$total_effort_hours, NA_real_),
+      size = factor(.data$size, levels = size_order),
+      size_label = factor(size_id_to_label_en(as.character(.data$size)), levels = size_id_to_label_en(size_order))
+    )
+
+  list(
+    effort_col = effort_col,
+    total_tbl = total_tbl,
+    by_size_tbl = by_size_tbl
+  )
+}
+
+plot_annual_count_total_check <- function(plot_data, output_png) {
+  p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .data$year, y = .data$total_count)) +
+    ggplot2::geom_line(linewidth = 1.2, color = "#2166AC") +
+    ggplot2::geom_point(size = 2.8, color = "#2166AC") +
+    ggplot2::scale_x_continuous(breaks = 2020:2024, limits = c(2020, 2024)) +
+    ggplot2::scale_y_continuous(labels = scales::comma) +
+    ggplot2::labs(title = "Annual trend of total count", x = "Year", y = "Count") +
+    theme_akagai_report()
+
+  ggplot2::ggsave(output_png, p, width = 10, height = 5.5, dpi = 300)
+  cat("saved:", output_png, "\n")
+}
+
+plot_annual_count_by_size_check <- function(plot_data, output_png) {
+  p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .data$year, y = .data$total_count, color = .data$size_label, group = .data$size_label)) +
+    ggplot2::geom_line(linewidth = 1.15) +
+    ggplot2::geom_point(size = 2.5) +
+    ggplot2::scale_x_continuous(breaks = 2020:2024, limits = c(2020, 2024)) +
+    ggplot2::scale_y_continuous(labels = scales::comma) +
+    ggplot2::scale_color_manual(values = c("Medium" = "#4E79A7", "Large" = "#59A14F", "Special" = "#E15759", "Extra large" = "#9C755F"), drop = FALSE) +
+    ggplot2::labs(title = "Annual trend in count by size class", x = "Year", y = "Count", color = "Size") +
+    theme_akagai_report() +
+    ggplot2::theme(legend.position = "right")
+
+  ggplot2::ggsave(output_png, p, width = 10, height = 5.5, dpi = 300)
+  cat("saved:", output_png, "\n")
+}
+
+plot_annual_cpue_total_check <- function(plot_data, output_png) {
+  p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .data$year, y = .data$cpue_ratio)) +
+    ggplot2::geom_line(linewidth = 1.2, color = "#2166AC") +
+    ggplot2::geom_point(size = 2.8, color = "#2166AC") +
+    ggplot2::scale_x_continuous(breaks = 2020:2024, limits = c(2020, 2024)) +
+    ggplot2::labs(title = "Annual trend of total CPUE", x = "Year", y = "CPUE (count/hour)") +
+    theme_akagai_report()
+
+  ggplot2::ggsave(output_png, p, width = 10, height = 5.5, dpi = 300)
+  cat("saved:", output_png, "\n")
+}
+
+plot_annual_cpue_by_size_check <- function(plot_data, output_png) {
+  p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .data$year, y = .data$cpue_ratio, color = .data$size_label, group = .data$size_label)) +
+    ggplot2::geom_line(linewidth = 1.15) +
+    ggplot2::geom_point(size = 2.5) +
+    ggplot2::scale_x_continuous(breaks = 2020:2024, limits = c(2020, 2024)) +
+    ggplot2::scale_color_manual(values = c("Medium" = "#4E79A7", "Large" = "#59A14F", "Special" = "#E15759", "Extra large" = "#9C755F"), drop = FALSE) +
+    ggplot2::labs(title = "Annual trend in CPUE by size class", x = "Year", y = "CPUE (count/hour)", color = "Size") +
+    theme_akagai_report() +
+    ggplot2::theme(legend.position = "right")
+
+  ggplot2::ggsave(output_png, p, width = 10, height = 5.5, dpi = 300)
+  cat("saved:", output_png, "\n")
+}
+
+compute_year_rank <- function(tbl, metric_col, target_year = 2023) {
+  rank_tbl <- tbl |>
+    dplyr::arrange(dplyr::desc(.data[[metric_col]]), .data$year) |>
+    dplyr::mutate(rank = dplyr::row_number())
+
+  hit <- rank_tbl |>
+    dplyr::filter(.data$year == target_year)
+
+  if (nrow(hit) == 0) {
+    return(NA_integer_)
+  }
+
+  hit$rank[[1]]
+}
+
 make_overview_summary_data <- function(clean_dat) {
   size_order <- c("tokudai", "toku", "dai", "medium", "waregai", "sho", "shosho")
 
@@ -777,6 +982,7 @@ run_make_overview_figure <- function() {
   excel_obj <- load_akagai_excel(paths$excel_path)
   clean_dat <- clean_akagai_data(excel_obj$data)
   summary_data <- make_overview_summary_data(clean_dat)
+  annual_diag <- make_annual_diagnostic_data(clean_dat, excel_obj$data)
 
   summary_csv <- summary_data$summary_tbl |>
     dplyr::select("size_label", "total_count")
@@ -787,10 +993,34 @@ run_make_overview_figure <- function() {
     output_png = file.path("output", "figures", "data_overview_summary.png")
   )
 
+  if (!is.null(annual_diag)) {
+    save_check_table(annual_diag$total_tbl, file.path("output", "check_tables", "year_count_effort_cpue_total.csv"))
+    save_check_table(annual_diag$by_size_tbl, file.path("output", "check_tables", "year_count_effort_cpue_by_size.csv"))
+
+    cat("yearly count summary =\n")
+    print(annual_diag$total_tbl |>
+      dplyr::select("year", "total_count"))
+    cat("yearly effort summary =\n")
+    print(annual_diag$total_tbl |>
+      dplyr::select("year", "total_effort_hours"))
+    cat("yearly CPUE ratio summary =\n")
+    print(annual_diag$total_tbl |>
+      dplyr::select("year", "cpue_ratio"))
+    cat("rank of 2023 in count =", compute_year_rank(annual_diag$total_tbl, "total_count"), "\n")
+    cat("rank of 2023 in effort =", compute_year_rank(annual_diag$total_tbl, "total_effort_hours"), "\n")
+    cat("rank of 2023 in CPUE =", compute_year_rank(annual_diag$total_tbl, "cpue_ratio"), "\n")
+
+    plot_annual_cpue_total_check(annual_diag$total_tbl, file.path("output", "check_figures", "annual_cpue_total.png"))
+    plot_annual_cpue_by_size_check(annual_diag$by_size_tbl, file.path("output", "check_figures", "annual_cpue_by_size.png"))
+    plot_annual_count_total_check(annual_diag$total_tbl, file.path("output", "check_figures", "annual_count_total.png"))
+    plot_annual_count_by_size_check(annual_diag$by_size_tbl, file.path("output", "check_figures", "annual_count_by_size.png"))
+  }
+
   invisible(list(
     excel_sheet = excel_obj$sheet,
     column_map = attr(clean_dat, "column_map"),
-    summary_data = summary_data
+    summary_data = summary_data,
+    annual_diag = annual_diag
   ))
 }
 
