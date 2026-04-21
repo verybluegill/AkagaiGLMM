@@ -439,6 +439,13 @@ build_candidate_model_specs <- function() {
       label_terms = NULL
     ),
     list(
+      depth_mode = "linear",
+      depth_tag = "D1",
+      uses_depth = TRUE,
+      depth_terms = "depth_glmm_sc",
+      label_terms = "depth_linear"
+    ),
+    list(
       depth_mode = "quad",
       depth_tag = "D2",
       uses_depth = TRUE,
@@ -591,7 +598,7 @@ compute_year_index_table <- function(model_obj, data_obj, depth_mode, depth_refe
 
   pred_grid$effort_glmm <- 1
 
-  if ("depth_glmm_sc" %in% model_frame_names && identical(depth_mode, "quad")) {
+  if ("depth_glmm_sc" %in% model_frame_names && depth_mode %in% c("linear", "quad")) {
     pred_grid$depth_glmm_sc <- 0
   }
 
@@ -681,8 +688,8 @@ make_raw_cpue_table <- function(data_obj, response_name) {
     dplyr::arrange(.data$year)
 }
 
-# depth の二次項を入れたモデルの予測値を、depth ごとの raw CPUE と比較するためのテーブルを作る。
-make_depth_quad_prediction_table <- function(model_obj, data_obj, n_grid = 100) {
+# depth の連続効果を入れたモデルの予測値を、depth ごとの raw CPUE と比較するためのテーブルを作る。
+make_depth_continuous_prediction_table <- function(model_obj, data_obj, n_grid = 100) {
   model_frame_names <- names(stats::model.frame(model_obj))
   depth_min <- min(data_obj$depth_glmm, na.rm = TRUE)
   depth_max <- max(data_obj$depth_glmm, na.rm = TRUE)
@@ -690,11 +697,11 @@ make_depth_quad_prediction_table <- function(model_obj, data_obj, n_grid = 100) 
   depth_sd <- stats::sd(data_obj$depth_glmm, na.rm = TRUE)
 
   if (!is.finite(depth_min) || !is.finite(depth_max)) {
-    stop("depth_glmm range must be finite for depth quad diagnostic.")
+    stop("depth_glmm range must be finite for depth continuous diagnostic.")
   }
 
   if (!is.finite(depth_sd) || depth_sd <= 0) {
-    stop("depth_glmm standard deviation must be finite and > 0 for depth quad diagnostic.")
+    stop("depth_glmm standard deviation must be finite and > 0 for depth continuous diagnostic.")
   }
 
   depth_grid <- seq(depth_min, depth_max, length.out = n_grid)
@@ -790,8 +797,8 @@ make_depth_binned_raw_cpue <- function(data_obj, n_bins = 12) {
     dplyr::select("depth_mid", "raw_cpue", "n_rows")
 }
 
-# depth の二次項を入れたモデルの当てはまりを、depth ごとの raw CPUE と比較して診断する図を保存する。
-plot_depth_quad_diagnostic <- function(pred_tbl, raw_tbl, output_path, title_text) {
+# depth の連続効果モデルの当てはまりを、depth ごとの raw CPUE と比較して診断する図を保存する。
+plot_depth_continuous_diagnostic <- function(pred_tbl, raw_tbl, output_path, title_text) {
   p <- ggplot2::ggplot() +
     ggplot2::geom_point(
       data = raw_tbl,
@@ -1169,7 +1176,7 @@ for (response_name in response_levels) {
       index_ci_fig_path <- file.path("output", "figures", paste0("index_best_", response_name, "_ci.png"))
       overlay_fig_path <- file.path("output", "figures", paste0("overlay_best_", response_name, ".png"))
       dharma_fig_path <- file.path("output", "figures", paste0("diagnostic_best_", response_name, ".png"))
-      depth_quad_fig_path <- file.path("output", "figures", paste0("depth_quad_diagnostic_best_", response_name, ".png"))
+      depth_continuous_fig_path <- file.path("output", "figures", paste0("depth_continuous_diagnostic_best_", response_name, ".png"))
 
       year_index_tbl <- compute_year_index_table(
         model_obj = final_fit_out$fit,
@@ -1195,16 +1202,16 @@ for (response_name in response_levels) {
         output_plot_path = dharma_fig_path
       )
 
-      if (identical(best_spec$depth_mode, "quad")) {
-        pred_tbl <- make_depth_quad_prediction_table(final_fit_out$fit, final_tbl)
+      if (best_spec$depth_mode %in% c("linear", "quad")) {
+        pred_tbl <- make_depth_continuous_prediction_table(final_fit_out$fit, final_tbl)
         raw_bin_tbl <- make_depth_binned_raw_cpue(final_tbl, n_bins = 12)
-        plot_depth_quad_diagnostic(
+        plot_depth_continuous_diagnostic(
           pred_tbl = pred_tbl,
           raw_tbl = raw_bin_tbl,
-          output_path = depth_quad_fig_path,
-          title_text = paste(response_name, "depth quad diagnostic")
+          output_path = depth_continuous_fig_path,
+          title_text = paste(response_name, "depth", best_spec$depth_mode, "diagnostic")
         )
-        cat("response =", response_name, "| saved depth quad diagnostic =", depth_quad_fig_path, "\n")
+        cat("response =", response_name, "| saved depth continuous diagnostic =", depth_continuous_fig_path, "\n")
       }
 
       saveRDS(final_fit_out$fit, model_rds_path)

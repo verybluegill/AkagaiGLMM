@@ -2,120 +2,160 @@ response,model_id,model_label,status,nobs,AIC,BIC,logLik,converged,pdHess,warnin
 chu,YM_year_month_Dc_Rav,year + month + depth_cat + offset + (1|area) + (1|vessel),completed,1016,8338.41588127028,8441.812082461187,-4148.20794063514,TRUE,TRUE,,0,TRUE,cat,area_vessel,year_month
 chu,YM_year_month_D0_Rav,year + month + offset + (1|area) + (1|vessel),completed,1016,8339.85291326427,8433.4018571989,-4150.926456632135,TRUE,TRUE,,1.4370319939898764,FALSE,none,area_vessel,year_month
 chu,YM_year_month_D2_Rav,year + month + depth_quad + offset + (1|area) + (1|vessel),completed,1016,8340.690402937807,8444.086604128714,-4149.345201468904,TRUE,TRUE,,2.274521667526642,TRUE,quad,area_vessel,year_month
+chu,YM_year_month_D1_Rav,year + month + depth_linear + offset + (1|area) + (1|vessel),completed,1016,8341.702038111689,8440.174610674458,-4150.8510190558445,TRUE,TRUE,,3.2861568414082285,TRUE,linear,area_vessel,year_month
 chu,Y_year_only_Dc_Rav,year + depth_cat + offset + (1|area) + (1|vessel),completed,1016,8353.435338921467,8402.671625202851,-4166.717669460733,TRUE,TRUE,,15.019457651185803,TRUE,cat,area_vessel,year_only
 chu,Y_year_only_D2_Rav,year + depth_quad + offset + (1|area) + (1|vessel),completed,1016,8355.653505411366,8404.88979169275,-4167.826752705683,TRUE,TRUE,,17.23762414108569,TRUE,quad,area_vessel,year_only
 chu,Y_year_only_D0_Rav,year + offset + (1|area) + (1|vessel),completed,1016,8356.255028803766,8395.644057828873,-4170.127514401883,TRUE,TRUE,,17.83914753348472,FALSE,none,area_vessel,year_only
+chu,Y_year_only_D1_Rav,year + depth_linear + offset + (1|area) + (1|vessel),completed,1016,8358.151925995671,8402.464583648916,-4170.075962997836,TRUE,TRUE,,19.736044725390457,TRUE,linear,area_vessel,year_only
 chu,YM_year_month_Dc_Ra,year + month + depth_cat + offset + (1|area),completed,1016,8389.70120557532,8488.173778138089,-4174.85060278766,TRUE,TRUE,,51.28532430503947,TRUE,cat,area,year_month
 chu,YM_year_month_D0_Ra,year + month + offset + (1|area),completed,1016,8393.347885899268,8481.97320120576,-4178.673942949634,TRUE,TRUE,,54.93200462898676,FALSE,none,area,year_month
 chu,YM_year_month_D2_Ra,year + month + depth_quad + offset + (1|area),completed,1016,8394.161694278082,8492.63426684085,-4177.080847139041,TRUE,TRUE,,55.74581300780119,TRUE,quad,area,year_month
+chu,YM_year_month_D1_Ra,year + month + depth_linear + offset + (1|area),completed,1016,8394.861973543628,8488.410917478257,-4178.430986771814,TRUE,TRUE,,56.44609227334695,TRUE,linear,area,year_month
 chu,Y_year_only_Dc_Ra,year + depth_cat + offset + (1|area),completed,1016,8410.19236509312,8454.505022746365,-4196.09618254656,TRUE,TRUE,,71.77648382283951,TRUE,cat,area,year_only
 chu,Y_year_only_D2_Ra,year + depth_quad + offset + (1|area),completed,1016,8415.883196216688,8460.195853869933,-4198.941598108344,TRUE,TRUE,,77.46731494640699,TRUE,quad,area,year_only
 chu,Y_year_only_D0_Ra,year + offset + (1|area),completed,1016,8416.624770479906,8451.090170876874,-4201.312385239953,TRUE,TRUE,,78.20888920962534,FALSE,none,area,year_only
+chu,Y_year_only_D1_Ra,year + depth_linear + offset + (1|area),completed,1016,8417.858085038866,8457.247114063974,-4200.929042519433,TRUE,TRUE,,79.44220376858539,TRUE,linear,area,year_only
 chu,YM_year_month_D0_Rv,year + month + offset + (1|vessel),completed,1016,8449.755878044218,8538.38119335071,-4206.877939022109,TRUE,TRUE,,111.33999677393695,FALSE,none,vessel,year_month
 chu,YM_year_month_Dc_Rv,year + month + depth_cat + offset + (1|vessel),completed,1016,8450.480910280745,8548.953482843513,-4205.240455140372,TRUE,TRUE,,112.06502901046406,TRUE,cat,vessel,year_month
+chu,YM_year_month_D1_Rv,year + month + depth_linear + offset + (1|vessel),completed,1016,8451.641279244903,8545.190223179532,-4206.820639622451,TRUE,TRUE,,113.22539797462196,TRUE,linear,vessel,year_month
 chu,YM_year_month_D2_Rv,year + month + depth_quad + offset + (1|vessel),completed,1016,8453.572534280458,8552.045106843227,-4206.786267140229,TRUE,TRUE,,115.15665301017725,TRUE,quad,vessel,year_month
 chu,YM_year_month_D0_R0,year + month + offset,completed,1016,8487.324636016334,8571.026322694686,-4226.662318008167,TRUE,TRUE,,148.9087547460531,FALSE,none,none,year_month
+chu,YM_year_month_D1_R0,year + month + depth_linear + offset,completed,1016,8488.456212676538,8577.08152798303,-4226.228106338269,TRUE,TRUE,,150.04033140625688,TRUE,linear,none,year_month
 chu,YM_year_month_Dc_R0,year + month + depth_cat + offset,completed,1016,8489.502975236672,8583.051919171301,-4225.751487618336,TRUE,TRUE,,151.08709396639097,TRUE,cat,none,year_month
 chu,YM_year_month_D2_R0,year + month + depth_quad + offset,completed,1016,8490.34690141524,8583.895845349869,-4226.17345070762,TRUE,TRUE,,151.9310201449589,TRUE,quad,none,year_month
 chu,Y_year_only_D0_Rv,year + offset + (1|vessel),completed,1016,8502.31893776973,8536.784338166699,-4244.159468884865,TRUE,TRUE,,163.90305649945003,FALSE,none,vessel,year_only
 chu,Y_year_only_Dc_Rv,year + depth_cat + offset + (1|vessel),completed,1016,8503.49087547348,8547.803533126726,-4242.74543773674,TRUE,TRUE,,165.07499420319982,TRUE,cat,vessel,year_only
+chu,Y_year_only_D1_Rv,year + depth_linear + offset + (1|vessel),completed,1016,8503.674471825798,8543.063500850905,-4243.837235912899,TRUE,TRUE,,165.258590555517,TRUE,linear,vessel,year_only
 chu,Y_year_only_D2_Rv,year + depth_quad + offset + (1|vessel),completed,1016,8505.56243058661,8549.875088239854,-4243.781215293305,TRUE,TRUE,,167.14654931632867,TRUE,quad,vessel,year_only
 chu,Y_year_only_D0_R0,year + offset,completed,1016,8539.487356331365,8569.029128100196,-4263.7436781656825,TRUE,TRUE,,201.07147506108413,FALSE,none,none,year_only
+chu,Y_year_only_D1_R0,year + depth_linear + offset,completed,1016,8539.491770189908,8573.957170586877,-4262.745885094954,TRUE,TRUE,,201.0758889196277,TRUE,linear,none,year_only
 chu,Y_year_only_Dc_R0,year + depth_cat + offset,completed,1016,8540.203700744385,8579.592729769493,-4262.1018503721925,TRUE,TRUE,,201.78781947410425,TRUE,cat,none,year_only
 chu,Y_year_only_D2_R0,year + depth_quad + offset,completed,1016,8541.342272025866,8580.731301050973,-4262.671136012933,TRUE,TRUE,,202.9263907555851,TRUE,quad,none,year_only
 dai,YM_year_month_Dc_Rav,year + month + depth_cat + offset + (1|area) + (1|vessel),completed,1016,8479.794156627066,8583.190357817972,-4218.897078313533,TRUE,TRUE,,0,TRUE,cat,area_vessel,year_month
 dai,YM_year_month_D0_Rav,year + month + offset + (1|area) + (1|vessel),completed,1016,8482.17375909369,8575.72270302832,-4222.086879546845,TRUE,TRUE,,2.3796024666244193,FALSE,none,area_vessel,year_month
 dai,YM_year_month_D2_Rav,year + month + depth_quad + offset + (1|area) + (1|vessel),completed,1016,8483.286335740395,8586.682536931301,-4220.643167870197,TRUE,TRUE,,3.4921791133292572,TRUE,quad,area_vessel,year_month
+dai,YM_year_month_D1_Rav,year + month + depth_linear + offset + (1|area) + (1|vessel),completed,1016,8484.173758421235,8582.646330984004,-4222.086879210618,TRUE,TRUE,,4.379601794169503,TRUE,linear,area_vessel,year_month
 dai,Y_year_only_Dc_Rav,year + depth_cat + offset + (1|area) + (1|vessel),completed,1016,8532.63104795173,8581.867334233115,-4256.315523975865,TRUE,TRUE,,52.836891324664975,TRUE,cat,area_vessel,year_only
 dai,Y_year_only_D2_Rav,year + depth_quad + offset + (1|area) + (1|vessel),completed,1016,8532.736259878691,8581.972546160076,-4256.368129939346,TRUE,TRUE,,52.94210325162567,TRUE,quad,area_vessel,year_only
 dai,YM_year_month_D2_Ra,year + month + depth_quad + offset + (1|area),completed,1016,8535.391385717949,8633.863958280717,-4247.695692858974,TRUE,TRUE,,55.59722909088305,TRUE,quad,area,year_month
 dai,Y_year_only_D0_Rav,year + offset + (1|area) + (1|vessel),completed,1016,8536.289417159776,8575.678446184884,-4260.144708579888,TRUE,TRUE,,56.495260532710745,FALSE,none,area_vessel,year_only
 dai,YM_year_month_D0_Ra,year + month + offset + (1|area),completed,1016,8537.432048860182,8626.057364166674,-4250.716024430091,TRUE,TRUE,,57.63789223311687,FALSE,none,area,year_month
+dai,Y_year_only_D1_Rav,year + depth_linear + offset + (1|area) + (1|vessel),completed,1016,8537.883358362807,8582.196016016052,-4259.941679181404,TRUE,TRUE,,58.08920173574188,TRUE,linear,area_vessel,year_only
 dai,YM_year_month_Dc_Ra,year + month + depth_cat + offset + (1|area),completed,1016,8538.55956407912,8637.032136641888,-4249.27978203956,TRUE,TRUE,,58.765407452054205,TRUE,cat,area,year_month
+dai,YM_year_month_D1_Ra,year + month + depth_linear + offset + (1|area),completed,1016,8538.819701992697,8632.368645927327,-4250.409850996349,TRUE,TRUE,,59.02554536563184,TRUE,linear,area,year_month
 dai,YM_year_month_Dc_Rv,year + month + depth_cat + offset + (1|vessel),completed,1016,8581.890643720026,8680.363216282794,-4270.945321860013,TRUE,TRUE,,102.09648709296016,TRUE,cat,vessel,year_month
 dai,YM_year_month_D0_Rv,year + month + offset + (1|vessel),completed,1016,8585.753856276888,8674.37917158338,-4274.876928138444,TRUE,TRUE,,105.95969964982214,FALSE,none,vessel,year_month
+dai,YM_year_month_D1_Rv,year + month + depth_linear + offset + (1|vessel),completed,1016,8587.178382892529,8680.727326827158,-4274.5891914462645,TRUE,TRUE,,107.38422626546344,TRUE,linear,vessel,year_month
 dai,YM_year_month_D2_Rv,year + month + depth_quad + offset + (1|vessel),completed,1016,8587.94835906442,8686.420931627188,-4273.97417953221,TRUE,TRUE,,108.15420243735389,TRUE,quad,vessel,year_month
 dai,Y_year_only_D2_Ra,year + depth_quad + offset + (1|area),completed,1016,8588.165082700723,8632.477740353968,-4285.082541350362,TRUE,TRUE,,108.37092607365776,TRUE,quad,area,year_only
+dai,Y_year_only_D1_Ra,year + depth_linear + offset + (1|area),completed,1016,8598.221967660038,8637.610996685145,-4291.110983830019,TRUE,TRUE,,118.42781103297239,TRUE,linear,area,year_only
 dai,Y_year_only_Dc_Ra,year + depth_cat + offset + (1|area),completed,1016,8599.236887135392,8643.549544788637,-4290.618443567696,TRUE,TRUE,,119.44273050832635,TRUE,cat,area,year_only
 dai,Y_year_only_D0_Ra,year + offset + (1|area),completed,1016,8599.2611216520545,8633.726522049023,-4292.630560826027,TRUE,TRUE,,119.4669650249889,FALSE,none,area,year_only
 dai,YM_year_month_Dc_R0,year + month + depth_cat + offset,completed,1016,8631.98558917485,8725.53453310948,-4296.992794587425,TRUE,TRUE,,152.19143254778464,TRUE,cat,none,year_month
 dai,YM_year_month_D2_R0,year + month + depth_quad + offset,completed,1016,8633.597836513378,8727.146780448007,-4297.798918256689,TRUE,TRUE,,153.80367988631224,TRUE,quad,none,year_month
 dai,YM_year_month_D0_R0,year + month + offset,completed,1016,8633.681562262844,8717.383248941196,-4299.840781131422,TRUE,TRUE,,153.88740563577812,FALSE,none,none,year_month
+dai,YM_year_month_D1_R0,year + month + depth_linear + offset,completed,1016,8634.762275289937,8723.387590596429,-4299.3811376449685,TRUE,TRUE,,154.96811866287135,TRUE,linear,none,year_month
 dai,Y_year_only_Dc_Rv,year + depth_cat + offset + (1|vessel),completed,1016,8668.572126753626,8712.884784406871,-4325.286063376813,TRUE,TRUE,,188.77797012656083,TRUE,cat,vessel,year_only
 dai,Y_year_only_D2_Rv,year + depth_quad + offset + (1|vessel),completed,1016,8669.634104548792,8713.946762202037,-4325.817052274396,TRUE,TRUE,,189.83994792172598,TRUE,quad,vessel,year_only
+dai,Y_year_only_D1_Rv,year + depth_linear + offset + (1|vessel),completed,1016,8669.949179402529,8709.338208427636,-4326.974589701264,TRUE,TRUE,,190.1550227754633,TRUE,linear,vessel,year_only
 dai,Y_year_only_D0_Rv,year + offset + (1|vessel),completed,1016,8670.545907966674,8705.011308363642,-4328.272953983337,TRUE,TRUE,,190.75175133960875,FALSE,none,vessel,year_only
 dai,Y_year_only_D2_R0,year + depth_quad + offset,completed,1016,8714.076312941312,8753.46534196642,-4349.038156470656,TRUE,TRUE,,234.2821563142461,TRUE,quad,none,year_only
+dai,Y_year_only_D1_R0,year + depth_linear + offset,completed,1016,8717.470091515504,8751.935491912473,-4351.735045757752,TRUE,TRUE,,237.67593488843886,TRUE,linear,none,year_only
 dai,Y_year_only_Dc_R0,year + depth_cat + offset,completed,1016,8719.29364088235,8758.682669907457,-4351.646820441175,TRUE,TRUE,,239.4994842552842,TRUE,cat,none,year_only
 dai,Y_year_only_D0_R0,year + offset,completed,1016,8719.515816383104,8749.057588151934,-4353.757908191552,TRUE,TRUE,,239.7216597560382,FALSE,none,none,year_only
 toku,YM_year_month_D2_Rav,year + month + depth_quad + offset + (1|area) + (1|vessel),completed,1016,8090.789196985677,8194.185398176583,-4024.3945984928387,TRUE,TRUE,,0,TRUE,quad,area_vessel,year_month
 toku,YM_year_month_D0_Rav,year + month + offset + (1|area) + (1|vessel),completed,1016,8096.727643757474,8190.276587692104,-4029.363821878737,TRUE,TRUE,,5.938446771796407,FALSE,none,area_vessel,year_month
 toku,YM_year_month_Dc_Rav,year + month + depth_cat + offset + (1|area) + (1|vessel),completed,1016,8096.941003963214,8200.337205154121,-4027.470501981607,TRUE,TRUE,,6.15180697753658,TRUE,cat,area_vessel,year_month
+toku,YM_year_month_D1_Rav,year + month + depth_linear + offset + (1|area) + (1|vessel),completed,1016,8098.4577284481165,8196.930301010885,-4029.2288642240583,TRUE,TRUE,,7.668531462439205,TRUE,linear,area_vessel,year_month
 toku,Y_year_only_D2_Rav,year + depth_quad + offset + (1|area) + (1|vessel),completed,1016,8106.95155228498,8156.187838566364,-4043.47577614249,TRUE,TRUE,,16.162355299302362,TRUE,quad,area_vessel,year_only
 toku,YM_year_month_D2_Ra,year + month + depth_quad + offset + (1|area),completed,1016,8114.106988124252,8212.57956068702,-4037.053494062126,TRUE,TRUE,,23.31779113857465,TRUE,quad,area,year_month
 toku,Y_year_only_Dc_Rav,year + depth_cat + offset + (1|area) + (1|vessel),completed,1016,8119.5465233911855,8168.78280967257,-4049.7732616955927,TRUE,TRUE,,28.757326405508138,TRUE,cat,area_vessel,year_only
 toku,Y_year_only_D0_Rav,year + offset + (1|area) + (1|vessel),completed,1016,8121.198192040276,8160.587221065383,-4052.599096020138,TRUE,TRUE,,30.408995054598563,FALSE,none,area_vessel,year_only
+toku,Y_year_only_D1_Rav,year + depth_linear + offset + (1|area) + (1|vessel),completed,1016,8121.610427576616,8165.9230852298615,-4051.805213788308,TRUE,TRUE,,30.821230590938285,TRUE,linear,area_vessel,year_only
 toku,YM_year_month_D0_Ra,year + month + offset + (1|area),completed,1016,8124.077539514217,8212.702854820709,-4044.0387697571086,TRUE,TRUE,,33.28834252853994,FALSE,none,area,year_month
 toku,YM_year_month_Dc_Ra,year + month + depth_cat + offset + (1|area),completed,1016,8124.8805022125325,8223.353074775301,-4042.4402511062663,TRUE,TRUE,,34.091305226855184,TRUE,cat,area,year_month
+toku,YM_year_month_D1_Ra,year + month + depth_linear + offset + (1|area),completed,1016,8125.105758836338,8218.654702770968,-4043.552879418169,TRUE,TRUE,,34.316561850660946,TRUE,linear,area,year_month
 toku,YM_year_month_D2_Rv,year + month + depth_quad + offset + (1|vessel),completed,1016,8131.737310019315,8230.209882582083,-4045.8686550096577,TRUE,TRUE,,40.94811303363804,TRUE,quad,vessel,year_month
 toku,Y_year_only_D2_Ra,year + depth_quad + offset + (1|area),completed,1016,8132.9169424954625,8177.229600148708,-4057.4584712477313,TRUE,TRUE,,42.1277455097852,TRUE,quad,area,year_only
 toku,YM_year_month_Dc_Rv,year + month + depth_cat + offset + (1|vessel),completed,1016,8138.666783400557,8237.139355963325,-4049.3333917002783,TRUE,TRUE,,47.87758641487926,TRUE,cat,vessel,year_month
 toku,YM_year_month_D0_Rv,year + month + offset + (1|vessel),completed,1016,8139.458886495051,8228.084201801543,-4051.7294432475255,TRUE,TRUE,,48.66968950937371,FALSE,none,vessel,year_month
+toku,YM_year_month_D1_Rv,year + month + depth_linear + offset + (1|vessel),completed,1016,8140.241594019519,8233.790537954148,-4051.1207970097594,TRUE,TRUE,,49.45239703384141,TRUE,linear,vessel,year_month
 toku,YM_year_month_D2_R0,year + month + depth_quad + offset,completed,1016,8150.072796030179,8243.621739964809,-4056.0363980150896,TRUE,TRUE,,59.2835990445019,TRUE,quad,none,year_month
+toku,Y_year_only_D1_Ra,year + depth_linear + offset + (1|area),completed,1016,8153.287907402916,8192.676936428023,-4068.643953701458,TRUE,TRUE,,62.498710417238726,TRUE,linear,area,year_only
 toku,Y_year_only_Dc_Ra,year + depth_cat + offset + (1|area),completed,1016,8154.518787256569,8198.831444909814,-4068.2593936282847,TRUE,TRUE,,63.729590270892004,TRUE,cat,area,year_only
 toku,Y_year_only_D0_Ra,year + offset + (1|area),completed,1016,8155.073731469212,8189.539131866181,-4070.536865734606,TRUE,TRUE,,64.28453448353503,FALSE,none,area,year_only
 toku,YM_year_month_Dc_R0,year + month + depth_cat + offset,completed,1016,8160.064034212996,8253.612978147627,-4061.032017106498,TRUE,TRUE,,69.27483722731904,TRUE,cat,none,year_month
 toku,YM_year_month_D0_R0,year + month + offset,completed,1016,8160.516065384908,8244.217752063261,-4063.258032692454,TRUE,TRUE,,69.72686839923063,FALSE,none,none,year_month
+toku,YM_year_month_D1_R0,year + month + depth_linear + offset,completed,1016,8160.846493463834,8249.471808770326,-4062.423246731917,TRUE,TRUE,,70.05729647815679,TRUE,linear,none,year_month
 toku,Y_year_only_D2_Rv,year + depth_quad + offset + (1|vessel),completed,1016,8161.150403946618,8205.463061599863,-4071.575201973309,TRUE,TRUE,,70.36120696094076,TRUE,quad,vessel,year_only
 toku,Y_year_only_Dc_Rv,year + depth_cat + offset + (1|vessel),completed,1016,8173.498588531982,8217.811246185227,-4077.749294265991,TRUE,TRUE,,82.70939154630469,TRUE,cat,vessel,year_only
+toku,Y_year_only_D1_Rv,year + depth_linear + offset + (1|vessel),completed,1016,8175.922110680583,8215.31113970569,-4079.9610553402913,TRUE,TRUE,,85.13291369490526,TRUE,linear,vessel,year_only
 toku,Y_year_only_D0_Rv,year + offset + (1|vessel),completed,1016,8176.713329206404,8211.178729603373,-4081.356664603202,TRUE,TRUE,,85.92413222072628,FALSE,none,vessel,year_only
 toku,Y_year_only_D2_R0,year + depth_quad + offset,completed,1016,8181.442313242692,8220.831342267798,-4082.721156621346,TRUE,TRUE,,90.65311625701452,TRUE,quad,none,year_only
+toku,Y_year_only_D1_R0,year + depth_linear + offset,completed,1016,8199.923163238844,8234.388563635812,-4092.961581619422,TRUE,TRUE,,109.13396625316636,TRUE,linear,none,year_only
 toku,Y_year_only_Dc_R0,year + depth_cat + offset,completed,1016,8199.99016424597,8239.379193271076,-4091.9950821229845,TRUE,TRUE,,109.2009672602926,TRUE,cat,none,year_only
 toku,Y_year_only_D0_R0,year + offset,completed,1016,8202.303250022034,8231.845021790865,-4095.151625011017,TRUE,TRUE,,111.51405303635693,FALSE,none,none,year_only
 tokudai,YM_year_month_D0_Rav,year + month + offset + (1|area) + (1|vessel),completed,1016,7508.169400671772,7601.718344606402,-3735.084700335886,TRUE,TRUE,,0,FALSE,none,area_vessel,year_month
+tokudai,YM_year_month_D1_Rav,year + month + depth_linear + offset + (1|area) + (1|vessel),completed,1016,7510.090456179469,7608.563028742237,-3735.0452280897343,TRUE,TRUE,,1.9210555076970195,TRUE,linear,area_vessel,year_month
 tokudai,YM_year_month_D2_Rav,year + month + depth_quad + offset + (1|area) + (1|vessel),completed,1016,7511.05058574647,7614.446786937377,-3734.525292873235,TRUE,TRUE,,2.881185074697896,TRUE,quad,area_vessel,year_month
 tokudai,YM_year_month_Dc_Rav,year + month + depth_cat + offset + (1|area) + (1|vessel),completed,1016,7511.367509647162,7614.763710838069,-3734.683754823581,TRUE,TRUE,,3.198108975389914,TRUE,cat,area_vessel,year_month
 tokudai,YM_year_month_D0_Rv,year + month + offset + (1|vessel),completed,1016,7537.005383323353,7625.630698629845,-3750.5026916616766,TRUE,TRUE,,28.835982651581617,FALSE,none,vessel,year_month
 tokudai,YM_year_month_D2_Rv,year + month + depth_quad + offset + (1|vessel),completed,1016,7538.482214212568,7636.954786775336,-3749.241107106284,TRUE,TRUE,,30.312813540796014,TRUE,quad,vessel,year_month
+tokudai,YM_year_month_D1_Rv,year + month + depth_linear + offset + (1|vessel),completed,1016,7539.002821687466,7632.551765622096,-3750.501410843733,TRUE,TRUE,,30.833421015694512,TRUE,linear,vessel,year_month
 tokudai,YM_year_month_Dc_Rv,year + month + depth_cat + offset + (1|vessel),completed,1016,7540.032436015249,7638.505008578018,-3750.0162180076245,TRUE,TRUE,,31.86303534347735,TRUE,cat,vessel,year_month
 tokudai,Y_year_only_D2_Rav,year + depth_quad + offset + (1|area) + (1|vessel),completed,1016,7572.858483684567,7622.094769965951,-3776.4292418422833,TRUE,TRUE,,64.68908301279498,TRUE,quad,area_vessel,year_only
 tokudai,Y_year_only_D0_Rav,year + offset + (1|area) + (1|vessel),completed,1016,7574.23623583491,7613.6252648600175,-3779.118117917455,TRUE,TRUE,,66.06683516313842,FALSE,none,area_vessel,year_only
+tokudai,Y_year_only_D1_Rav,year + depth_linear + offset + (1|area) + (1|vessel),completed,1016,7575.733911028985,7620.046568682231,-3778.8669555144925,TRUE,TRUE,,67.5645103572133,TRUE,linear,area_vessel,year_only
 tokudai,Y_year_only_Dc_Rav,year + depth_cat + offset + (1|area) + (1|vessel),completed,1016,7576.475480493837,7625.711766775221,-3778.2377402469183,TRUE,TRUE,,68.30607982206493,TRUE,cat,area_vessel,year_only
 tokudai,YM_year_month_D0_Ra,year + month + offset + (1|area),completed,1016,7595.978187142889,7684.60350244938,-3779.9890935714443,TRUE,TRUE,,87.80878647111695,FALSE,none,area,year_month
+tokudai,YM_year_month_D1_Ra,year + month + depth_linear + offset + (1|area),completed,1016,7597.944431858881,7691.493375793511,-3779.9722159294406,TRUE,TRUE,,89.77503118710956,TRUE,linear,area,year_month
 tokudai,YM_year_month_D2_Ra,year + month + depth_quad + offset + (1|area),completed,1016,7598.379702233307,7696.852274796076,-3779.1898511166537,TRUE,TRUE,,90.21030156153574,TRUE,quad,area,year_month
 tokudai,YM_year_month_Dc_Ra,year + month + depth_cat + offset + (1|area),completed,1016,7599.085939769502,7697.558512332271,-3779.542969884751,TRUE,TRUE,,90.91653909773049,TRUE,cat,area,year_month
 tokudai,YM_year_month_D0_R0,year + month + offset,completed,1016,7636.081961034245,7719.783647712598,-3801.0409805171225,TRUE,TRUE,,127.91256036247341,FALSE,none,none,year_month
+tokudai,YM_year_month_D1_R0,year + month + depth_linear + offset,completed,1016,7638.065678168623,7726.690993475115,-3801.0328390843115,TRUE,TRUE,,129.89627749685133,TRUE,linear,none,year_month
 tokudai,YM_year_month_Dc_R0,year + month + depth_cat + offset,completed,1016,7638.2338965971985,7731.782840531829,-3800.1169482985993,TRUE,TRUE,,130.06449592542685,TRUE,cat,none,year_month
 tokudai,YM_year_month_D2_R0,year + month + depth_quad + offset,completed,1016,7638.352141718844,7731.901085653474,-3800.176070859422,TRUE,TRUE,,130.18274104707234,TRUE,quad,none,year_month
 tokudai,Y_year_only_D2_Ra,year + depth_quad + offset + (1|area),completed,1016,7639.641137149539,7683.953794802785,-3810.8205685747694,TRUE,TRUE,,131.47173647776708,TRUE,quad,area,year_only
 tokudai,Y_year_only_D0_Ra,year + offset + (1|area),completed,1016,7642.199480845104,7676.664881242073,-3814.099740422552,TRUE,TRUE,,134.03008017333195,FALSE,none,area,year_only
 tokudai,Y_year_only_Dc_Ra,year + depth_cat + offset + (1|area),completed,1016,7643.718456222597,7688.0311138758425,-3812.8592281112983,TRUE,TRUE,,135.54905555082496,TRUE,cat,area,year_only
+tokudai,Y_year_only_D1_Ra,year + depth_linear + offset + (1|area),completed,1016,7643.819010697656,7683.208039722764,-3813.909505348828,TRUE,TRUE,,135.6496100258846,TRUE,linear,area,year_only
 tokudai,Y_year_only_D2_Rv,year + depth_quad + offset + (1|vessel),completed,1016,7643.937341303194,7688.24999895644,-3812.968670651597,TRUE,TRUE,,135.7679406314228,TRUE,quad,vessel,year_only
 tokudai,Y_year_only_D0_Rv,year + offset + (1|vessel),completed,1016,7647.382220111426,7681.847620508395,-3816.691110055713,TRUE,TRUE,,139.2128194396546,FALSE,none,vessel,year_only
 tokudai,Y_year_only_Dc_Rv,year + depth_cat + offset + (1|vessel),completed,1016,7648.548202170315,7692.8608598235605,-3815.2741010851573,TRUE,TRUE,,140.378801498543,TRUE,cat,vessel,year_only
+tokudai,Y_year_only_D1_Rv,year + depth_linear + offset + (1|vessel),completed,1016,7649.357108891439,7688.746137916546,-3816.6785544457193,TRUE,TRUE,,141.187708219667,TRUE,linear,vessel,year_only
 tokudai,Y_year_only_D2_R0,year + depth_quad + offset,completed,1016,7724.509181594701,7763.898210619808,-3854.2545907973504,TRUE,TRUE,,216.3397809229291,TRUE,quad,none,year_only
 tokudai,Y_year_only_D0_R0,year + offset,completed,1016,7725.746573521534,7755.288345290364,-3856.873286760767,TRUE,TRUE,,217.57717284976206,FALSE,none,none,year_only
 tokudai,Y_year_only_Dc_R0,year + depth_cat + offset,completed,1016,7726.8498253979,7766.238854423007,-3855.42491269895,TRUE,TRUE,,218.68042472612797,TRUE,cat,none,year_only
+tokudai,Y_year_only_D1_R0,year + depth_linear + offset,completed,1016,7727.714705680181,7762.18010607715,-3856.8573528400907,TRUE,TRUE,,219.54530500840974,TRUE,linear,none,year_only
 count_total,YM_year_month_D0_Rav,year + month + offset + (1|area) + (1|vessel),completed,1016,11449.91421692822,11543.46316086285,-5705.95710846411,TRUE,TRUE,,0,FALSE,none,area_vessel,year_month
 count_total,YM_year_month_Dc_Rav,year + month + depth_cat + offset + (1|area) + (1|vessel),completed,1016,11450.562910430252,11553.959111621158,-5704.281455215126,TRUE,TRUE,,0.6486935020311648,TRUE,cat,area_vessel,year_month
 count_total,YM_year_month_D2_Rav,year + month + depth_quad + offset + (1|area) + (1|vessel),completed,1016,11451.257740489336,11554.653941680242,-5704.628870244668,TRUE,TRUE,,1.3435235611159442,TRUE,quad,area_vessel,year_month
+count_total,YM_year_month_D1_Rav,year + month + depth_linear + offset + (1|area) + (1|vessel),completed,1016,11451.91420191729,11550.38677448006,-5705.957100958645,TRUE,TRUE,,1.9999849890700716,TRUE,linear,area_vessel,year_month
 count_total,Y_year_only_D2_Rav,year + depth_quad + offset + (1|area) + (1|vessel),completed,1016,11469.755761642244,11518.992047923628,-5724.877880821122,TRUE,TRUE,,19.841544714023257,TRUE,quad,area_vessel,year_only
 count_total,Y_year_only_Dc_Rav,year + depth_cat + offset + (1|area) + (1|vessel),completed,1016,11471.337875579331,11520.574161860715,-5725.6689377896655,TRUE,TRUE,,21.4236586511106,TRUE,cat,area_vessel,year_only
 count_total,Y_year_only_D0_Rav,year + offset + (1|area) + (1|vessel),completed,1016,11472.094052803888,11511.483081828996,-5728.047026401944,TRUE,TRUE,,22.179835875667777,FALSE,none,area_vessel,year_only
+count_total,Y_year_only_D1_Rav,year + depth_linear + offset + (1|area) + (1|vessel),completed,1016,11473.777777121339,11518.090434774584,-5727.888888560669,TRUE,TRUE,,23.863560193118246,TRUE,linear,area_vessel,year_only
 count_total,YM_year_month_D2_Ra,year + month + depth_quad + offset + (1|area),completed,1016,11483.483341502159,11581.955914064927,-5721.741670751079,TRUE,TRUE,,33.5691245739381,TRUE,quad,area,year_month
 count_total,YM_year_month_D0_Ra,year + month + offset + (1|area),completed,1016,11484.250591463668,11572.87590677016,-5724.125295731834,TRUE,TRUE,,34.33637453544725,FALSE,none,area,year_month
+count_total,YM_year_month_D1_Ra,year + month + depth_linear + offset + (1|area),completed,1016,11485.507238053153,11579.056181987782,-5723.753619026576,TRUE,TRUE,,35.59302112493242,TRUE,linear,area,year_month
 count_total,YM_year_month_Dc_Ra,year + month + depth_cat + offset + (1|area),completed,1016,11487.236659270926,11585.709231833695,-5723.618329635463,TRUE,TRUE,,37.32244234270547,TRUE,cat,area,year_month
 count_total,Y_year_only_D2_Ra,year + depth_quad + offset + (1|area),completed,1016,11502.501602101369,11546.814259754614,-5742.2508010506845,TRUE,TRUE,,52.587385173148505,TRUE,quad,area,year_only
+count_total,Y_year_only_D1_Ra,year + depth_linear + offset + (1|area),completed,1016,11508.687654457419,11548.076683482526,-5746.343827228709,TRUE,TRUE,,58.77343752919842,TRUE,linear,area,year_only
 count_total,Y_year_only_D0_Ra,year + offset + (1|area),completed,1016,11509.2715886471,11543.736989044068,-5747.63579432355,TRUE,TRUE,,59.35737171887922,FALSE,none,area,year_only
 count_total,Y_year_only_Dc_Ra,year + depth_cat + offset + (1|area),completed,1016,11511.555279573315,11555.86793722656,-5746.777639786657,TRUE,TRUE,,61.64106264509428,TRUE,cat,area,year_only
 count_total,YM_year_month_Dc_Rv,year + month + depth_cat + offset + (1|vessel),completed,1016,11539.424815267192,11637.89738782996,-5749.712407633596,TRUE,TRUE,,89.51059833897125,TRUE,cat,vessel,year_month
 count_total,YM_year_month_D0_Rv,year + month + offset + (1|vessel),completed,1016,11540.312246652393,11628.937561958885,-5752.156123326196,TRUE,TRUE,,90.39802972417237,FALSE,none,vessel,year_month
+count_total,YM_year_month_D1_Rv,year + month + depth_linear + offset + (1|vessel),completed,1016,11541.976619109402,11635.525563044032,-5751.988309554701,TRUE,TRUE,,92.06240218118182,TRUE,linear,vessel,year_month
 count_total,YM_year_month_D2_Rv,year + month + depth_quad + offset + (1|vessel),completed,1016,11542.750713693456,11641.223286256225,-5751.375356846728,TRUE,TRUE,,92.836496765236,TRUE,quad,vessel,year_month
 count_total,YM_year_month_D0_R0,year + month + offset,completed,1016,11567.74302236685,11651.444709045203,-5766.871511183425,TRUE,TRUE,,117.8288054386303,FALSE,none,none,year_month
 count_total,YM_year_month_D2_R0,year + month + depth_quad + offset,completed,1016,11568.57041768001,11662.11936161464,-5765.285208840005,TRUE,TRUE,,118.65620075178958,TRUE,quad,none,year_month
+count_total,YM_year_month_D1_R0,year + month + depth_linear + offset,completed,1016,11568.707613688197,11657.332928994689,-5766.3538068440985,TRUE,TRUE,,118.79339675997653,TRUE,linear,none,year_month
 count_total,YM_year_month_Dc_R0,year + month + depth_cat + offset,completed,1016,11569.283015095585,11662.831959030214,-5765.641507547793,TRUE,TRUE,,119.36879816736473,TRUE,cat,none,year_month
 count_total,Y_year_only_Dc_Rv,year + depth_cat + offset + (1|vessel),completed,1016,11580.868900813177,11625.181558466422,-5781.434450406588,TRUE,TRUE,,130.95468388495647,TRUE,cat,vessel,year_only
 count_total,Y_year_only_D2_Rv,year + depth_quad + offset + (1|vessel),completed,1016,11581.093072187647,11625.405729840892,-5781.546536093823,TRUE,TRUE,,131.1788552594262,TRUE,quad,vessel,year_only
 count_total,Y_year_only_D0_Rv,year + offset + (1|vessel),completed,1016,11581.578881225494,11616.044281622462,-5783.789440612747,TRUE,TRUE,,131.6646642972737,FALSE,none,vessel,year_only
+count_total,Y_year_only_D1_Rv,year + depth_linear + offset + (1|vessel),completed,1016,11581.738204872749,11621.127233897856,-5782.869102436374,TRUE,TRUE,,131.8239879445282,TRUE,linear,vessel,year_only
 count_total,Y_year_only_D2_R0,year + depth_quad + offset,completed,1016,11606.216478506665,11645.605507531773,-5795.108239253333,TRUE,TRUE,,156.3022615784448,TRUE,quad,none,year_only
+count_total,Y_year_only_D1_R0,year + depth_linear + offset,completed,1016,11608.196663438825,11642.662063835793,-5797.098331719412,TRUE,TRUE,,158.28244651060413,TRUE,linear,none,year_only
 count_total,Y_year_only_D0_R0,year + offset,completed,1016,11610.011732625166,11639.553504393996,-5799.005866312583,TRUE,TRUE,,160.09751569694527,FALSE,none,none,year_only
 count_total,Y_year_only_Dc_R0,year + depth_cat + offset,completed,1016,11611.665371653087,11651.054400678195,-5797.832685826544,TRUE,TRUE,,161.75115472486686,TRUE,cat,none,year_only
